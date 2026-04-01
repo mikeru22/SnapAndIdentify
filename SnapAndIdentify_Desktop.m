@@ -311,14 +311,14 @@ function SnapAndIdentify_Desktop(cfg)
                 'ForegroundColor','white', ...
                 'Position',[guideX camY guideW camH]);
             emotionLabels = sai_emotionLabels();
-            emotionEmojis = {'&#x1F620;','&#x1F922;','&#x1F628;','&#x1F604;', ...
-                             '&#x1F622;','&#x1F632;','&#x1F610;','&#x1F612;'};
+            guideEmojiMap = sai_buildEmotionEmojiMap();
             eRowH = round(camH / (numel(emotionLabels)+1));
             eFS = round(16*sf);
             for ei = 1:numel(emotionLabels)
                 ey = camH - round(40*sf) - ei*eRowH;
+                emojiForLabel = guideEmojiMap(emotionLabels{ei});
                 htmlStr = sprintf('<html><body style="%s"><span style="font-size:1.4em;">%s</span> %s</body></html>', ...
-                    emojiFontCSS(), emotionEmojis{ei}, sai_cleanLabel(emotionLabels{ei}));
+                    emojiFontCSS(), emojiForLabel, sai_cleanLabel(emotionLabels{ei}));
                 uilabel(guidePanel,'Text',htmlStr, ...
                     'Interpreter','html', ...
                     'FontSize',eFS,'FontColor','white', ...
@@ -423,7 +423,7 @@ function SnapAndIdentify_Desktop(cfg)
 
             % Center the row: image + gap + label + gap + buttons as one group
             btnAreaW = 2*thumbBtnW + thumbBtnGap;
-            labelW   = round(300*sf);
+            labelW   = round(450*sf);
             gapH     = round(12*sf);
             contentW = imgSize + gapH + labelW + gapH + btnAreaW;
             rowX     = max(margin, (figW - contentW)/2);
