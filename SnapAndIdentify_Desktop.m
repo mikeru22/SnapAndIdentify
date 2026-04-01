@@ -4,10 +4,11 @@ function SnapAndIdentify_Desktop(cfg)
 %   detection mode, scalable UI, and optimized camera preview performance.
 
     % Shared state variables (accessible by nested callback functions)
-    startPressed = false;
-    donePressed  = false;
-    feedback     = zeros(1, cfg.numPhotos);
-    currentMode  = cfg.gameMode;       % 'objectid' or 'emotion'
+    startPressed  = false;
+    donePressed   = false;
+    exitRequested = false;
+    feedback      = zeros(1, cfg.numPhotos);
+    currentMode   = cfg.gameMode;       % 'objectid' or 'emotion'
     pendingNetworkName = cfg.networkName;
 
     % Logo path
@@ -30,6 +31,7 @@ function SnapAndIdentify_Desktop(cfg)
         uiimage(splashFig,'ImageSource',logoFile, ...
             'Position',[(figW-logoW_splash)/2 round(20*sf) logoW_splash logoH_splash]);
     end
+    addExitButton(splashFig, sf);
     drawnow;
 
     try
@@ -198,6 +200,8 @@ function SnapAndIdentify_Desktop(cfg)
             emoBtn.BackgroundColor = modeInactiveColor;
         end
 
+        addExitButton(startFig, sf);
+
         % --- Camera preview ---
         previewAx = uiaxes(startFig,'Position',[previewX previewY previewW previewH]);
         previewAx.XTick = []; previewAx.YTick = [];
@@ -231,7 +235,7 @@ function SnapAndIdentify_Desktop(cfg)
 
         % Live preview loop — update CData only, use drawnow limitrate
         tic;
-        while ~startPressed
+        while ~startPressed && ~exitRequested
             if ~isvalid(startFig), keepRunning = false; break; end
             if toc > cfg.resetTimeout, tic; end
             try
@@ -240,7 +244,7 @@ function SnapAndIdentify_Desktop(cfg)
             end
             drawnow limitrate;
         end
-        if ~keepRunning, break; end
+        if ~keepRunning || exitRequested, break; end
 
         % --- If network changed, show loading screen and reload ---
         if ~strcmpi(pendingNetworkName, S.networkName) && strcmpi(currentMode,'objectid')
@@ -281,6 +285,7 @@ function SnapAndIdentify_Desktop(cfg)
             'WindowState','maximized');
         [figW, figH] = waitForMaximize(snapFig);
         sf = scaleFactor(figW, figH);
+        addExitButton(snapFig, sf);
 
         statusH    = round(100*sf);
         predLabelH = round(70*sf);
@@ -356,12 +361,14 @@ function SnapAndIdentify_Desktop(cfg)
 
         % Photo loop
         for p = 1:cfg.numPhotos
+            if exitRequested, break; end
             try
                 thumbAx.Visible = 'off'; predLabel.Text = '';
                 countSec = (p==1)*cfg.countdownBefore + (p>1)*cfg.delayBetween;
 
                 % Countdown with fast inner loop for smooth video
                 for w = countSec:-1:1
+                    if exitRequested, break; end
                     if p == 1
                         statusLabel.Text = ehtmlf('&#x1F3AF;','Photo %d of %d &mdash; %d', p, cfg.numPhotos, w);
                     else
@@ -369,6 +376,7 @@ function SnapAndIdentify_Desktop(cfg)
                     end
                     deadline = tic;
                     while toc(deadline) < 1
+                        if exitRequested, break; end
                         try
                             hCam.CData = sai_takePhoto(cam);
                         catch
@@ -410,6 +418,7 @@ function SnapAndIdentify_Desktop(cfg)
             end
         end
         delete(snapFig);
+        if exitRequested, break; end
 
         % ==================== RESULTS GALLERY ====================
         donePressed = false;
@@ -418,6 +427,7 @@ function SnapAndIdentify_Desktop(cfg)
         resFig = uifigure('Name','Results','Color','white','WindowState','maximized');
         [figW, figH] = waitForMaximize(resFig);
         sf = scaleFactor(figW, figH);
+        addExitButton(resFig, sf);
 
         margin   = round(12*sf);
         titleH   = round(60*sf);
@@ -491,7 +501,7 @@ function SnapAndIdentify_Desktop(cfg)
             'ButtonPushedFcn',@(~,~) onDonePressed());
 
         tic;
-        while ~donePressed
+        while ~donePressed && ~exitRequested
             if ~isvalid(resFig), break; end
             if toc > cfg.resetTimeout, break; end
             nC = sum(feedback==1); nR = sum(feedback~=0);
@@ -499,6 +509,10 @@ function SnapAndIdentify_Desktop(cfg)
                 scoreLbl.Text = sprintf('<html><body>Score so far: %d out of %d right!</body></html>', nC, nR);
             end
             pause(0.3); drawnow;
+        end
+        if exitRequested
+            if isvalid(resFig), delete(resFig); end
+            break;
         end
 
         % ==================== SCORE SUMMARY ====================
@@ -538,12 +552,32 @@ function SnapAndIdentify_Desktop(cfg)
                 uiimage(scoreFig,'ImageSource',logoFile, ...
                     'Position',[(figW-logoW_score)/2 round(15*sf) logoW_score logoH_score]);
             end
-            pause(8);
+            addExitButton(scoreFig, sf);
+            scoreDeadline = tic;
+            while toc(scoreDeadline) < 8 && ~exitRequested
+                if ~isvalid(scoreFig), break; end
+                pause(0.3); drawnow;
+            end
             if isvalid(scoreFig), delete(scoreFig); end
         end
 
+        if exitRequested, break; end
         startPressed = false; donePressed = false;
         feedback = zeros(1, cfg.numPhotos);
+    end
+
+    % Cleanup on exit
+    try clear cam; catch, end
+    % Close any lingering figures from this session
+    allFigs = findall(0, 'Type', 'figure');
+    for f = 1:numel(allFigs)
+        if contains(allFigs(f).Name, 'Snap & Identify') || ...
+           contains(allFigs(f).Name, 'Taking Photos') || ...
+           contains(allFigs(f).Name, 'Results') || ...
+           contains(allFigs(f).Name, 'Final Score') || ...
+           contains(allFigs(f).Name, 'Loading Network')
+            delete(allFigs(f));
+        end
     end
 
     % ===== NESTED CALLBACK FUNCTIONS =====
@@ -553,6 +587,21 @@ function SnapAndIdentify_Desktop(cfg)
 
     function onDonePressed()
         donePressed = true;
+    end
+
+    function onExit()
+        exitRequested = true;
+        keepRunning = false;
+    end
+
+    function addExitButton(fig, sf_local)
+        exitW = round(70*sf_local);
+        exitH = round(30*sf_local);
+        uibutton(fig,'push','Text','Exit', ...
+            'FontSize',round(12*sf_local), ...
+            'BackgroundColor',[0.6 0.1 0.1],'FontColor','white', ...
+            'Position',[fig.Position(3)-exitW-round(5*sf_local) fig.Position(4)-exitH-round(5*sf_local) exitW exitH], ...
+            'ButtonPushedFcn',@(~,~) onExit());
     end
 
     function onFeedback(upBtn, dnBtn, photoIdx, value)
