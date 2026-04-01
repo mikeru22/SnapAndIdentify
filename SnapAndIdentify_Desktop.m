@@ -141,12 +141,27 @@ function SnapAndIdentify_Desktop(cfg)
             'ValueChangedFcn',@(src,~) onSettingChange('countdownBefore',str2double(src.Value)));
         yy = yy - rowH_s - padS;
 
-        % AI Network dropdown (hidden in emotion mode)
+        % AI Network dropdown (hidden in emotion mode, only shows installed networks)
+        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet'};
+        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet'};
+        if isfield(cfg, 'availableNetworks') && ~isempty(cfg.availableNetworks)
+            availNets = cfg.availableNetworks;
+        else
+            availNets = allNetNames;  % fallback: show all
+        end
+        keepIdx = ismember(allNetNames, availNets);
+        ddItems     = allNetLabels(keepIdx);
+        ddItemsData = allNetNames(keepIdx);
+        % Ensure selected network is in the list
+        if ~ismember(pendingNetworkName, ddItemsData) && ~isempty(ddItemsData)
+            pendingNetworkName = ddItemsData{1};
+        end
+
         netLabel = uilabel(settPanel,'Text','AI Network:','FontSize',lblFS, ...
             'FontColor','white','Position',[padS yy lblW rowH_s]);
         ddNetwork = uidropdown(settPanel, ...
-            'Items',{'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet'}, ...
-            'ItemsData',{'googlenet','resnet18','resnet50','squeezenet'}, ...
+            'Items',ddItems, ...
+            'ItemsData',ddItemsData, ...
             'Value',pendingNetworkName, ...
             'FontSize',lblFS, ...
             'Position',[lblW+2*padS yy ddW rowH_s], ...
