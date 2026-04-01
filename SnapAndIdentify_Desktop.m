@@ -10,6 +10,10 @@ function SnapAndIdentify_Desktop(cfg)
     currentMode  = cfg.gameMode;       % 'objectid' or 'emotion'
     pendingNetworkName = cfg.networkName;
 
+    % Logo path
+    logoFile = fullfile(fileparts(mfilename('fullpath')), 'mathworks-logo-full-color-rgb.png');
+    hasLogo  = isfile(logoFile);
+
     % --- Loading splash ---
     splashFig = uifigure('Name','Snap & Identify','Color',[0.18 0.55 0.78], ...
         'WindowState','maximized');
@@ -19,7 +23,13 @@ function SnapAndIdentify_Desktop(cfg)
         'Text',ehtml('&#x1F916;','Getting the Computer Brain Ready...'), ...
         'Interpreter','html', ...
         'FontSize',round(36*sf),'FontWeight','bold','FontColor','white', ...
-        'HorizontalAlignment','center','Position',[0 0 figW figH]);
+        'HorizontalAlignment','center','Position',[0 figH*0.2 figW figH*0.6]);
+    if hasLogo
+        logoH_splash = round(60*sf);
+        logoW_splash = round(logoH_splash * 5);  % logo aspect ~5:1
+        uiimage(splashFig,'ImageSource',logoFile, ...
+            'Position',[(figW-logoW_splash)/2 round(20*sf) logoW_splash logoH_splash]);
+    end
     drawnow;
 
     try
@@ -173,6 +183,14 @@ function SnapAndIdentify_Desktop(cfg)
             axis(previewAx, 'image');
             previewAx.XTick = []; previewAx.YTick = [];
         catch
+        end
+
+        % MathWorks logo (bottom-right corner)
+        if hasLogo
+            logoH_start = round(40*sf);
+            logoW_start = round(logoH_start * 5);
+            uiimage(startFig,'ImageSource',logoFile, ...
+                'Position',[figW-logoW_start-round(10*sf) round(10*sf) logoW_start logoH_start]);
         end
 
         % START button
@@ -486,6 +504,12 @@ function SnapAndIdentify_Desktop(cfg)
                 'FontSize',round(20*sf),'FontColor',[0.85 0.92 1.0], ...
                 'HorizontalAlignment','center','WordWrap','on', ...
                 'Position',[figW*0.1 figH*0.05 figW*0.8 figH*0.2]);
+            if hasLogo
+                logoH_score = round(50*sf);
+                logoW_score = round(logoH_score * 5);
+                uiimage(scoreFig,'ImageSource',logoFile, ...
+                    'Position',[(figW-logoW_score)/2 round(15*sf) logoW_score logoH_score]);
+            end
             pause(8);
             if isvalid(scoreFig), delete(scoreFig); end
         end
