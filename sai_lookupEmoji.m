@@ -3,6 +3,6 @@ function emoji = sai_lookupEmoji(label, emojiMap)
     if emojiMap.isKey(key)
         emoji = emojiMap(key);
     else
-        emoji = char(0x1F914);
+        emoji = '&#x1F914;';
     end
 end

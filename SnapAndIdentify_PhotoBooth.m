@@ -1,31 +1,32 @@
 %% Snap & Identify: Photo Booth Edition!
-% Two modes controlled by cameraMode setting:
-%   'webcam'  - Desktop/laptop + USB webcam. Interactive uifigure UI.
-%   'mobile'  - iPad via MATLAB Mobile. Classic figure() GUI.
+% Desktop/laptop + USB webcam. Interactive uifigure UI.
+
+%% ====== CHECK DEPENDENCIES ======
+sai_checkDependencies();
 
 %% ====== SETTINGS (Museum Staff: Adjust These!) ======
 numPhotos = 5;
 delayBetween = 3;
 countdownBefore = 5;
 resetTimeout = 60;
-
-cameraMode = 'webcam';              % <<< CHANGE TO 'mobile' FOR iPAD
+gameMode = 'objectid';              % 'objectid' or 'emotion'
 cameraIndex = 1;
-mobileCameraName = 'front';         % 'front' (selfie) or 'back'
-mobileCameraResolution = '640x480';
+networkName = 'googlenet';          % 'googlenet', 'resnet18', 'resnet50', 'squeezenet'
+
+%% ====== AUTO-SETUP: Emotion model ======
+matFile = fullfile(fileparts(mfilename('fullpath')), 'emotion_net.mat');
+if ~isfile(matFile)
+    fprintf('Emotion model not found. Running one-time setup...\n');
+    sai_setupEmotionModel();
+end
 
 %% ====== LAUNCH ======
 cfg.numPhotos = numPhotos;
 cfg.delayBetween = delayBetween;
 cfg.countdownBefore = countdownBefore;
 cfg.resetTimeout = resetTimeout;
-cfg.cameraMode = cameraMode;
 cfg.cameraIndex = cameraIndex;
-cfg.mobileCameraName = mobileCameraName;
-cfg.mobileCameraResolution = mobileCameraResolution;
+cfg.gameMode = gameMode;
+cfg.networkName = networkName;
 
-if strcmpi(cameraMode, 'webcam')
-    SnapAndIdentify_Desktop(cfg);
-else
-    SnapAndIdentify_Mobile(cfg);
-end
+SnapAndIdentify_Desktop(cfg);
