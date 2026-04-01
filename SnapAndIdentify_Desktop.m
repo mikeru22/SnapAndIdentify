@@ -168,22 +168,35 @@ function SnapAndIdentify_Desktop(cfg)
             'ValueChangedFcn',@(src,~) onNetworkSelect(src.Value));
         yy = yy - rowH_s - padS;
 
-        % Mode toggle button
+        % Mode selection: two side-by-side buttons
+        modeBtnH = round(38*sf);
+        modeBtnW = round((settingsW - 3*padS) / 2);
+        modeActiveColor   = [0.4 0.2 0.7];
+        modeInactiveColor = [0.35 0.35 0.35];
+
+        objBtn = uibutton(startFig,'push', ...
+            'Text','<html><body>&#x1F50D; Object ID</body></html>', ...
+            'Interpreter','html', ...
+            'FontSize',round(14*sf),'FontWeight','bold','FontColor','white', ...
+            'Position',[settingsX+padS settingsY+padS modeBtnW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onModeSelect('objectid'));
+        emoBtn = uibutton(startFig,'push', ...
+            'Text','<html><body>&#x1F60A; Emotion</body></html>', ...
+            'Interpreter','html', ...
+            'FontSize',round(14*sf),'FontWeight','bold','FontColor','white', ...
+            'Position',[settingsX+2*padS+modeBtnW settingsY+padS modeBtnW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onModeSelect('emotion'));
+
+        % Set initial highlight
         if strcmpi(currentMode,'emotion')
-            modeText = '&#x1F60A; Emotion Mode';
+            emoBtn.BackgroundColor = modeActiveColor;
+            objBtn.BackgroundColor = modeInactiveColor;
             netLabel.Visible = 'off';
             ddNetwork.Visible = 'off';
         else
-            modeText = '&#x1F50D; Object ID Mode';
+            objBtn.BackgroundColor = modeActiveColor;
+            emoBtn.BackgroundColor = modeInactiveColor;
         end
-        modeBtnW = settingsW - 2*padS;
-        modeBtn = uibutton(startFig,'push', ...
-            'Text',['<html><body>' modeText '</body></html>'], ...
-            'Interpreter','html', ...
-            'FontSize',round(16*sf),'FontWeight','bold', ...
-            'BackgroundColor',[0.4 0.2 0.7],'FontColor','white', ...
-            'Position',[settingsX+padS settingsY+padS modeBtnW round(38*sf)], ...
-            'ButtonPushedFcn',@(~,~) onModeToggle());
 
         % --- Camera preview ---
         previewAx = uiaxes(startFig,'Position',[previewX previewY previewW previewH]);
@@ -459,8 +472,8 @@ function SnapAndIdentify_Desktop(cfg)
                 'BackgroundColor',[0.85 0.95 0.85],'Position',[thumbUpX btnY thumbBtnW thumbBtnW]);
             dnBtn = uibutton(scrollPanel,'push','Text','👎','FontSize',thumbFS, ...
                 'BackgroundColor',[0.95 0.85 0.85],'Position',[thumbUpX+thumbBtnW+thumbBtnGap btnY thumbBtnW thumbBtnW]);
-            upBtn.ButtonPushedFcn = @(btn,~) onFeedback(btn, p, 1);
-            dnBtn.ButtonPushedFcn = @(btn,~) onFeedback(btn, p, -1);
+            upBtn.ButtonPushedFcn = @(~,~) onFeedback(upBtn, dnBtn, p, 1);
+            dnBtn.ButtonPushedFcn = @(~,~) onFeedback(upBtn, dnBtn, p, -1);
         end
 
         doneW = min(round(180*sf), figW*0.22);
@@ -542,12 +555,14 @@ function SnapAndIdentify_Desktop(cfg)
         donePressed = true;
     end
 
-    function onFeedback(btn, photoIdx, value)
+    function onFeedback(upBtn, dnBtn, photoIdx, value)
         feedback(photoIdx) = value;
         if value == 1
-            btn.BackgroundColor = [0.3 0.85 0.3];
+            upBtn.BackgroundColor = [0.3 0.85 0.3];
+            dnBtn.BackgroundColor = [0.95 0.85 0.85];  % reset other
         else
-            btn.BackgroundColor = [0.9 0.3 0.3];
+            dnBtn.BackgroundColor = [0.9 0.3 0.3];
+            upBtn.BackgroundColor = [0.85 0.95 0.85];  % reset other
         end
     end
 
@@ -559,15 +574,16 @@ function SnapAndIdentify_Desktop(cfg)
         pendingNetworkName = value;
     end
 
-    function onModeToggle()
-        if strcmpi(currentMode, 'objectid')
-            currentMode = 'emotion';
-            modeBtn.Text = ['<html><body>' '&#x1F60A; Emotion Mode' '</body></html>'];
+    function onModeSelect(mode)
+        currentMode = mode;
+        if strcmpi(mode, 'emotion')
+            emoBtn.BackgroundColor = modeActiveColor;
+            objBtn.BackgroundColor = modeInactiveColor;
             netLabel.Visible = 'off';
             ddNetwork.Visible = 'off';
         else
-            currentMode = 'objectid';
-            modeBtn.Text = ['<html><body>' '&#x1F50D; Object ID Mode' '</body></html>'];
+            objBtn.BackgroundColor = modeActiveColor;
+            emoBtn.BackgroundColor = modeInactiveColor;
             netLabel.Visible = 'on';
             ddNetwork.Visible = 'on';
         end
