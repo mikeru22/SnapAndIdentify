@@ -1,6 +1,5 @@
-# Generated/downloaded model files (auto-created by sai_setupEmotionModel)
+# Downloaded ONNX source file (large, not needed at runtime)
 emotion-ferplus-8.onnx
-emotion_net.mat
 
 # MATLAB Drive metadata
 .MATLABDriveTag
