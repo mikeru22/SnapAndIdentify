@@ -99,7 +99,7 @@ function SnapAndIdentify_Desktop(cfg)
         padS   = round(12*sf);
         ddW    = round(120*sf);
         lblW   = settingsW - ddW - 3*padS;
-        yy     = settingsH - round(50*sf);  % inside panel coords
+        yy     = settingsH - round(70*sf);  % inside panel coords (extra top padding for title)
 
         % Photos dropdown
         uilabel(settPanel,'Text','Photos:','FontSize',lblFS, ...
@@ -403,23 +403,24 @@ function SnapAndIdentify_Desktop(cfg)
             thumbFile = fullfile(tempdir, sprintf('snap_thumb_%d.png', p));
             imwrite(imresize(photos{p}, [imgSize imgSize]), thumbFile);
 
-            % Center the row content
-            btnAreaW = 2*thumbBtnW + thumbBtnGap + margin;
-            contentW = imgSize + round(12*sf) + round(300*sf) + btnAreaW;
-            rowX = max(margin, (figW - contentW)/2);
+            % Center the row: image + gap + label + gap + buttons as one group
+            btnAreaW = 2*thumbBtnW + thumbBtnGap;
+            labelW   = round(300*sf);
+            gapH     = round(12*sf);
+            contentW = imgSize + gapH + labelW + gapH + btnAreaW;
+            rowX     = max(margin, (figW - contentW)/2);
 
             uiimage(scrollPanel,'ImageSource',thumbFile, ...
                 'Position',[rowX y imgSize imgSize],'ScaleMethod','fit');
 
-            labelX = rowX + imgSize + round(12*sf);
-            labelW = figW - labelX - btnAreaW - margin;
+            labelX = rowX + imgSize + gapH;
             uilabel(scrollPanel, ...
                 'Text',ehtmlPred(pEmoji(p), pName(p), pConf(p)), ...
                 'Interpreter','html', ...
                 'FontSize',labelFS,'FontWeight','bold','VerticalAlignment','center', ...
                 'WordWrap','on','Position',[labelX y labelW rowH]);
 
-            thumbUpX = figW - btnAreaW - margin;
+            thumbUpX = labelX + labelW + gapH;
             btnY = y + (rowH - thumbBtnW)/2;
             upBtn = uibutton(scrollPanel,'push','Text','👍','FontSize',thumbFS, ...
                 'BackgroundColor',[0.85 0.95 0.85],'Position',[thumbUpX btnY thumbBtnW thumbBtnW]);
