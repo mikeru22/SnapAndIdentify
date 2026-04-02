@@ -85,7 +85,7 @@ function SnapAndIdentify_Desktop(cfg)
 
         % Layout: settings panel on left-center, camera preview on right-center
         settingsW = round(320*sf);
-        settingsH = round(320*sf);
+        settingsH = round(400*sf);
         previewY  = btnH + 2*btnPad;
         previewH  = figH - topBarH - infoPad - previewY;
 
@@ -168,6 +168,30 @@ function SnapAndIdentify_Desktop(cfg)
             'FontSize',lblFS, ...
             'Position',[lblW+2*padS yy ddW rowH_s], ...
             'ValueChangedFcn',@(src,~) onNetworkSelect(src.Value));
+        yy = yy - rowH_s - padS;
+
+        % Camera dropdown
+        if isfield(cfg, 'cameraList') && ~isempty(cfg.cameraList)
+            camNames = cfg.cameraList;
+            % Build display items: "1: Name"
+            camItems = cell(1, numel(camNames));
+            camItemsData = 1:numel(camNames);
+            for ci = 1:numel(camNames)
+                camItems{ci} = sprintf('%d: %s', ci, camNames{ci});
+            end
+        else
+            camItems = {'1: Default'};
+            camItemsData = 1;
+        end
+        uilabel(settPanel,'Text','Camera:','FontSize',lblFS, ...
+            'FontColor','white','Position',[padS yy lblW rowH_s]);
+        ddCamera = uidropdown(settPanel, ...
+            'Items',camItems, ...
+            'ItemsData',camItemsData, ...
+            'Value',cfg.cameraIndex, ...
+            'FontSize',round(11*sf), ...
+            'Position',[lblW+2*padS yy ddW rowH_s], ...
+            'ValueChangedFcn',@(src,~) onCameraSelect(src.Value));
         yy = yy - rowH_s - padS;
 
         % Mode selection: two side-by-side buttons
@@ -364,7 +388,11 @@ function SnapAndIdentify_Desktop(cfg)
             if exitRequested, break; end
             try
                 thumbAx.Visible = 'off'; predLabel.Text = '';
-                countSec = (p==1)*cfg.countdownBefore + (p>1)*cfg.delayBetween;
+                if p == 1
+                    countSec = cfg.countdownBefore;
+                else
+                    countSec = cfg.delayBetween;
+                end
 
                 % Countdown with fast inner loop for smooth video
                 for w = countSec:-1:1
@@ -621,6 +649,21 @@ function SnapAndIdentify_Desktop(cfg)
 
     function onNetworkSelect(value)
         pendingNetworkName = value;
+    end
+
+    function onCameraSelect(newIndex)
+        try
+            clear cam;
+            cam = sai_setupCamera(newIndex);
+            cfg.cameraIndex = newIndex;
+            % Update preview with new camera
+            try
+                hPreview.CData = sai_takePhoto(cam);
+            catch
+            end
+        catch ME3
+            fprintf('Camera switch failed: %s\n', ME3.message);
+        end
     end
 
     function onModeSelect(mode)

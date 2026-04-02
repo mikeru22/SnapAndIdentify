@@ -21,6 +21,14 @@ if ~isfile(matFile)
 end
 
 %% ====== LAUNCH ======
+%% ====== DETECT CAMERAS ======
+try
+    camList = webcamlist;
+catch
+    camList = {};
+end
+
+%% ====== LAUNCH ======
 cfg.numPhotos = numPhotos;
 cfg.delayBetween = delayBetween;
 cfg.countdownBefore = countdownBefore;
@@ -29,5 +37,6 @@ cfg.cameraIndex = cameraIndex;
 cfg.gameMode = gameMode;
 cfg.networkName = networkName;
 cfg.availableNetworks = availableNetworks;
+cfg.cameraList = camList;
 
 SnapAndIdentify_Desktop(cfg);
