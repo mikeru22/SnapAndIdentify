@@ -231,6 +231,7 @@ function SnapAndIdentify_Desktop(cfg)
         previewAx.XTick = []; previewAx.YTick = [];
         previewAx.Color = 'black'; previewAx.XColor = 'none'; previewAx.YColor = 'none';
         previewAx.Toolbar.Visible = 'off';
+        previewAx.CLim = [0 255];  % lock color limits to avoid recalculation
 
         % Create image object once for performance
         try
@@ -257,17 +258,20 @@ function SnapAndIdentify_Desktop(cfg)
             'Position',[(figW-btnW)/2 btnPad btnW btnH], ...
             'ButtonPushedFcn',@(~,~) onStartPressed());
 
-        % Live preview loop — update CData only, use drawnow limitrate
+        % Live preview via timer (non-blocking for responsive UI)
+        previewTimer = timer('ExecutionMode','fixedSpacing', ...
+            'Period', 0.05, 'BusyMode','drop', ...
+            'TimerFcn', @(~,~) updatePreview());
+        start(previewTimer);
+
+        % Wait for START or Exit (non-blocking pause loop)
         tic;
         while ~startPressed && ~exitRequested
             if ~isvalid(startFig), keepRunning = false; break; end
             if toc > cfg.resetTimeout, tic; end
-            try
-                hPreview.CData = sai_takePhoto(cam);
-            catch
-            end
-            drawnow limitrate;
+            pause(0.1);
         end
+        stop(previewTimer); delete(previewTimer);
         if ~keepRunning || exitRequested, break; end
 
         % --- If network changed, show loading screen and reload ---
@@ -337,6 +341,7 @@ function SnapAndIdentify_Desktop(cfg)
         cameraAx.XTick = []; cameraAx.YTick = [];
         cameraAx.Color = 'black'; cameraAx.XColor = 'none'; cameraAx.YColor = 'none';
         cameraAx.Toolbar.Visible = 'off';
+        cameraAx.CLim = [0 255];
 
         % Create camera image object once
         try
@@ -394,7 +399,11 @@ function SnapAndIdentify_Desktop(cfg)
                     countSec = cfg.delayBetween;
                 end
 
-                % Countdown with fast inner loop for smooth video
+                % Countdown with timer-based camera preview
+                countdownTimer = timer('ExecutionMode','fixedSpacing', ...
+                    'Period', 0.05, 'BusyMode','drop', ...
+                    'TimerFcn', @(~,~) updateCamPreview());
+                start(countdownTimer);
                 for w = countSec:-1:1
                     if exitRequested, break; end
                     if p == 1
@@ -402,16 +411,10 @@ function SnapAndIdentify_Desktop(cfg)
                     else
                         statusLabel.Text = ehtmlf('','Next photo in %d...', w);
                     end
-                    deadline = tic;
-                    while toc(deadline) < 1
-                        if exitRequested, break; end
-                        try
-                            hCam.CData = sai_takePhoto(cam);
-                        catch
-                        end
-                        drawnow limitrate;
-                    end
+                    drawnow;
+                    pause(1);
                 end
+                stop(countdownTimer); delete(countdownTimer);
 
                 statusLabel.Text = ehtmlf('&#x1F4F8;','SNAP!  Photo %d of %d', p, cfg.numPhotos);
                 drawnow;
@@ -649,6 +652,22 @@ function SnapAndIdentify_Desktop(cfg)
 
     function onNetworkSelect(value)
         pendingNetworkName = value;
+    end
+
+    function updatePreview()
+        try
+            hPreview.CData = snapshot(cam);
+            drawnow limitrate;
+        catch
+        end
+    end
+
+    function updateCamPreview()
+        try
+            hCam.CData = snapshot(cam);
+            drawnow limitrate;
+        catch
+        end
     end
 
     function onCameraSelect(newIndex)
