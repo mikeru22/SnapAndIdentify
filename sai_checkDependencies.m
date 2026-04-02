@@ -56,6 +56,7 @@ function availableNetworks = sai_checkDependencies()
         'resnet18',    'ResNet-18',    'Deep Learning Toolbox Model for ResNet-18 Network'
         'resnet50',    'ResNet-50',    'Deep Learning Toolbox Model for ResNet-50 Network'
         'squeezenet',  'SqueezeNet',   'Deep Learning Toolbox Model for SqueezeNet Network'
+        'resnet101',   'Resnet101',    'Deep Learning Toolbox Model for SqueezeNet Network'
     };
 
     availableNetworks = {};

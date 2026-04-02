@@ -10,7 +10,7 @@ delayBetween = 3;
 countdownBefore = 5;
 resetTimeout = 60;
 gameMode = 'objectid';              % 'objectid' or 'emotion'
-cameraIndex = 1;
+cameraIndex = 2;
 networkName = 'googlenet';          % 'googlenet', 'resnet18', 'resnet50', 'squeezenet'
 
 %% ====== AUTO-SETUP: Emotion model ======

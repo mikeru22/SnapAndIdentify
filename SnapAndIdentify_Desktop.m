@@ -144,8 +144,8 @@ function SnapAndIdentify_Desktop(cfg)
         yy = yy - rowH_s - padS;
 
         % AI Network dropdown (hidden in emotion mode, only shows installed networks)
-        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet'};
-        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet'};
+        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet', 'resnet101'};
+        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet', 'resnet101'};
         if isfield(cfg, 'availableNetworks') && ~isempty(cfg.availableNetworks)
             availNets = cfg.availableNetworks;
         else

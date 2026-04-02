@@ -12,6 +12,8 @@ function [net, inputSize] = sai_loadNetwork(networkName)
             net = resnet50;
         case 'squeezenet'
             net = squeezenet;
+        case 'resnet101'
+            net = resnet101;
         otherwise
             error('sai_loadNetwork:UnknownNetwork', ...
                 'Unknown network: %s. Use googlenet, resnet18, resnet50, or squeezenet.', networkName);
