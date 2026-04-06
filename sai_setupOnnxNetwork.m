@@ -10,15 +10,12 @@ function sai_setupOnnxNetwork(networkName)
         case 'mobilenetv3small'
             url = 'https://huggingface.co/pyronear/mobilenet_v3_small/resolve/main/model.onnx';
             matFile = fullfile(baseDir, 'mobilenetv3_small.mat');
-            inputSize = [224 224];
         case 'mobilenetv3large'
             url = 'https://huggingface.co/pyronear/mobilenet_v3_large/resolve/main/model.onnx';
             matFile = fullfile(baseDir, 'mobilenetv3_large.mat');
-            inputSize = [224 224];
         case 'efficientnetlite4'
             url = 'https://github.com/onnx/models/raw/main/validated/vision/classification/efficientnet-lite4/model/efficientnet-lite4-11.onnx';
             matFile = fullfile(baseDir, 'efficientnet_lite4.mat');
-            inputSize = [300 300];
         otherwise
             error('sai_setupOnnxNetwork:Unknown', 'Unknown ONNX network: %s', networkName);
     end
@@ -29,7 +26,11 @@ function sai_setupOnnxNetwork(networkName)
     websave(onnxFile, url);
 
     fprintf('Importing ONNX model (this may take a minute)...\n');
-    net = importNetworkFromONNX(onnxFile); %#ok<NASGU>
+    net = importNetworkFromONNX(onnxFile);
+
+    % Read actual input size from the imported network's input layer
+    inputSize = net.Layers(1).InputSize(1:2);
+    fprintf('Detected input size: [%d %d]\n', inputSize(1), inputSize(2));
 
     fprintf('Saving to %s...\n', matFile);
     save(matFile, 'net', 'inputSize', '-v7.3');
