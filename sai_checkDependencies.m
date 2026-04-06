@@ -135,7 +135,14 @@ function [availableNetworks, availableDetectors] = sai_checkDependencies()
             fprintf('  [OK]       %s\n', displayName);
             availableDetectors{end+1} = detName; %#ok<AGROW>
         catch
-            fprintf('  [MISSING]  %s (install via Add-On Explorer for Continuous mode)\n', displayName);
+            fprintf('  [MISSING]  %s\n', displayName);
+            fprintf('             Opening Add-On Explorer to install...\n');
+            try
+                matlab.addons.supportpackage.internal.explorer.showSupportPackages('YOLOV4', 'tripwire');
+                fprintf('             Please install from the Add-On Explorer window, then re-run the app.\n');
+            catch
+                fprintf('             Install via Add-On Explorer: Home > Add-Ons > search "YOLO v4"\n');
+            end
         end
     end
 
