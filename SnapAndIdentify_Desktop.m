@@ -641,7 +641,11 @@ function SnapAndIdentify_Desktop(cfg)
                         statusLabel.Text = ehtmlf('','Next photo in %d...', w);
                     end
                     drawnow;
-                    pause(1);
+                    % Interruptible 1-second wait (check exit every 0.2s)
+                    for cw = 1:5
+                        if exitRequested, break; end
+                        pause(0.2);
+                    end
                 end
                 stop(countdownTimer); delete(countdownTimer);
 
@@ -682,6 +686,7 @@ function SnapAndIdentify_Desktop(cfg)
                     pName(p)  = string(sai_modernizeLabel(sai_cleanLabel(lbl)));
                     pConf(p)  = string(sai_confidenceText(max(scr)));
                 end
+                if exitRequested, break; end
 
                 statusLabel.Text = ehtmlf('','Photo %d of %d &mdash; Result:', p, nPhotos);
                 thumbAx.Visible = 'on';
@@ -699,7 +704,12 @@ function SnapAndIdentify_Desktop(cfg)
                 else
                     predLabel.Text = ehtmlPred(pEmoji(p), pName(p), pConf(p));
                 end
-                drawnow; pause(2);
+                drawnow;
+                % Interruptible result display (check exit every 0.2s)
+                for rw = 1:10
+                    if exitRequested, break; end
+                    pause(0.2);
+                end
             catch
                 photos{p} = uint8(128*ones(224,224,3));
                 pEmoji(p) = "?"; pName(p) = "Camera Error"; pConf(p) = "";
@@ -939,11 +949,17 @@ function SnapAndIdentify_Desktop(cfg)
     function addExitButton(fig, sf_local)
         exitW = round(70*sf_local);
         exitH = round(30*sf_local);
+        % Use a larger top margin to stay clear of the title bar
+        topMargin = round(40*sf_local);
+        rightMargin = round(10*sf_local);
+        figSz = fig.Position(3:4);
         uibutton(fig,'push','Text','Exit', ...
             'FontSize',round(12*sf_local), ...
             'BackgroundColor',[0.6 0.1 0.1],'FontColor','white', ...
-            'Position',[fig.Position(3)-exitW-round(5*sf_local) fig.Position(4)-exitH-round(5*sf_local) exitW exitH], ...
+            'Position',[figSz(1)-exitW-rightMargin figSz(2)-exitH-topMargin exitW exitH], ...
             'ButtonPushedFcn',@(~,~) onExit());
+        % Also trigger exit when the window X button is clicked
+        fig.CloseRequestFcn = @(~,~) onExit();
     end
 
     function onFeedback(upBtn, dnBtn, photoIdx, value)
