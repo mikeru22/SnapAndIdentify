@@ -583,9 +583,19 @@ function SnapAndIdentify_Desktop(cfg)
                 uiimage(scoreFig,'ImageSource',logoFile, ...
                     'Position',[(figW-logoW_score)/2 round(15*sf) logoW_score logoH_score]);
             end
+            % Play Again button
+            playAgainW = round(280*sf);
+            playAgainH = round(60*sf);
+            startPressed = false;
+            uibutton(scoreFig,'push','Text','Play Again!', ...
+                'FontSize',round(24*sf),'FontWeight','bold', ...
+                'BackgroundColor',[0.2 0.8 0.3],'FontColor','white', ...
+                'Position',[(figW-playAgainW)/2 figH*0.12 playAgainW playAgainH], ...
+                'ButtonPushedFcn',@(~,~) onStartPressed());
             addExitButton(scoreFig, sf);
+
             scoreDeadline = tic;
-            while toc(scoreDeadline) < 8 && ~exitRequested
+            while toc(scoreDeadline) < 15 && ~exitRequested && ~startPressed
                 if ~isvalid(scoreFig), break; end
                 pause(0.3); drawnow;
             end
