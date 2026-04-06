@@ -2,8 +2,6 @@
 *.onnx
 
 # ONNX-imported network .mat files (large, auto-downloaded on first use)
-mobilenetv3_small.mat
-mobilenetv3_large.mat
 efficientnet_lite4.mat
 
 # ImageNet labels file (auto-downloaded)

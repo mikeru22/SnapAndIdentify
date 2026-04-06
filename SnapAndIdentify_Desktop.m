@@ -160,8 +160,8 @@ function SnapAndIdentify_Desktop(cfg)
         yy = yy - rowH_s - padS;
 
         % AI Network dropdown (hidden in emotion mode, only shows installed networks)
-        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet','resnet101','mobilenetv2','efficientnetb0','nasnetmobile','shufflenet','mobilenetv3small','mobilenetv3large','efficientnetlite4'};
-        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet','ResNet-101','MobileNet-v2','EfficientNet-b0','NASNet-Mobile','ShuffleNet','MobileNetV3-Small','MobileNetV3-Large','EfficientNet-Lite4'};
+        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet','resnet101','mobilenetv2','efficientnetb0','nasnetmobile','shufflenet','efficientnetlite4'};
+        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet','ResNet-101','MobileNet-v2','EfficientNet-b0','NASNet-Mobile','ShuffleNet','EfficientNet-Lite4'};
         % Detector names (for continuous mode)
         detectorNames  = {'tiny-yolov4-coco'};
         detectorLabels = {'Tiny YOLOv4 (COCO)'};

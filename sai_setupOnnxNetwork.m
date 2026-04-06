@@ -7,12 +7,6 @@ function sai_setupOnnxNetwork(networkName)
     baseDir = fileparts(mfilename('fullpath'));
 
     switch lower(networkName)
-        case 'mobilenetv3small'
-            url = 'https://huggingface.co/pyronear/mobilenet_v3_small/resolve/main/model.onnx';
-            matFile = fullfile(baseDir, 'mobilenetv3_small.mat');
-        case 'mobilenetv3large'
-            url = 'https://huggingface.co/pyronear/mobilenet_v3_large/resolve/main/model.onnx';
-            matFile = fullfile(baseDir, 'mobilenetv3_large.mat');
         case 'efficientnetlite4'
             url = 'https://github.com/onnx/models/raw/main/validated/vision/classification/efficientnet-lite4/model/efficientnet-lite4-11.onnx';
             matFile = fullfile(baseDir, 'efficientnet_lite4.mat');

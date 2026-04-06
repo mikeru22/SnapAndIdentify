@@ -80,8 +80,6 @@ function [availableNetworks, availableDetectors] = sai_checkDependencies()
     % --- Check ONNX-imported networks (check for .mat files) ---
     fprintf('\n--- Checking ONNX-imported networks ---\n');
     onnxNetworks = {
-        'mobilenetv3small',  'MobileNetV3-Small',  'mobilenetv3_small.mat'
-        'mobilenetv3large',  'MobileNetV3-Large',  'mobilenetv3_large.mat'
         'efficientnetlite4', 'EfficientNet-Lite4',  'efficientnet_lite4.mat'
     };
     for i = 1:size(onnxNetworks, 1)

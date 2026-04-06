@@ -26,24 +26,6 @@ function [net, inputSize, isOnnx] = sai_loadNetwork(networkName)
             net = nasnetmobile;
         case 'shufflenet'
             net = shufflenet;
-        case 'mobilenetv3small'
-            matFile = fullfile(baseDir, 'mobilenetv3_small.mat');
-            if ~isfile(matFile)
-                sai_setupOnnxNetwork('mobilenetv3small');
-            end
-            data = load(matFile, 'net');
-            net = data.net;
-            inputSize = net.Layers(1).InputSize(1:2);
-            isOnnx = true; return;
-        case 'mobilenetv3large'
-            matFile = fullfile(baseDir, 'mobilenetv3_large.mat');
-            if ~isfile(matFile)
-                sai_setupOnnxNetwork('mobilenetv3large');
-            end
-            data = load(matFile, 'net');
-            net = data.net;
-            inputSize = net.Layers(1).InputSize(1:2);
-            isOnnx = true; return;
         case 'efficientnetlite4'
             matFile = fullfile(baseDir, 'efficientnet_lite4.mat');
             if ~isfile(matFile)
