@@ -13,6 +13,7 @@ function SnapAndIdentify_Desktop(cfg)
     pendingNetworkName = cfg.networkName;
     savedClassifierName = cfg.networkName;  % remember classifier when switching to continuous
     promptMode    = false;              % guided emotion prompts
+    detailedLabels = false;             % YOLO + classifier sub-classification
 
     % Continuous mode shared state (for nested callbacks)
     detector       = [];
@@ -259,6 +260,15 @@ function SnapAndIdentify_Desktop(cfg)
             'ButtonPushedFcn',@(~,~) onPromptToggle());
         promptBtn.Visible = 'off';
 
+        % Detailed Labels toggle (only visible in continuous mode with YOLO)
+        detailBtn = uibutton(startFig,'push', ...
+            'Text','Detailed Labels: OFF', ...
+            'FontSize',round(11*sf),'FontWeight','bold','FontColor','white', ...
+            'BackgroundColor',[0.35 0.35 0.35], ...
+            'Position',[settingsX+padS modeRow2Y promptBtnW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onDetailToggle());
+        detailBtn.Visible = 'off';
+
         % Set initial highlight
         updateModeUI();
 
@@ -414,6 +424,35 @@ function SnapAndIdentify_Desktop(cfg)
                     contStatus.Text = 'Detecting objects...';
                 catch ME3
                     contStatus.Text = sprintf('Detector load failed: %s', ME3.message);
+                end
+                % Also load best available classifier for detailed labels mode
+                if detailedLabels && ~isempty(detector)
+                    % Preference order: highest accuracy first
+                    classifierPrefs = {'efficientnetlite4','efficientnetb0','resnet101', ...
+                        'resnet50','nasnetmobile','mobilenetv2','googlenet', ...
+                        'resnet18','shufflenet','squeezenet'};
+                    classifierLoaded = false;
+                    for cp = 1:numel(classifierPrefs)
+                        netName = classifierPrefs{cp};
+                        contStatus.Text = sprintf('Loading %s for detailed labels...', netName);
+                        drawnow;
+                        try
+                            [contNet, contInputSize, contIsOnnx] = sai_loadNetwork(netName);
+                            contEmojiMap = sai_buildEmojiMap();
+                            if contIsOnnx
+                                contImgnetLabels = sai_imagenetLabels();
+                            end
+                            contStatus.Text = sprintf('Detecting with detailed labels (%s)...', netName);
+                            classifierLoaded = true;
+                            break;
+                        catch
+                            % Try next network
+                        end
+                    end
+                    if ~classifierLoaded
+                        contStatus.Text = 'No classifier available — using YOLO labels';
+                        detailedLabels = false;
+                    end
                 end
             else
                 % --- Classifier path ---
@@ -977,6 +1016,17 @@ function SnapAndIdentify_Desktop(cfg)
         end
     end
 
+    function onDetailToggle()
+        detailedLabels = ~detailedLabels;
+        if detailedLabels
+            detailBtn.Text = 'Detailed Labels: ON';
+            detailBtn.BackgroundColor = [0.2 0.7 0.4];
+        else
+            detailBtn.Text = 'Detailed Labels: OFF';
+            detailBtn.BackgroundColor = [0.35 0.35 0.35];
+        end
+    end
+
     function setBackPressed()
         backPressed = true;
     end
@@ -986,17 +1036,75 @@ function SnapAndIdentify_Desktop(cfg)
             frame = snapshot(cam);
             [bboxes, scores, labels] = detect(detector, frame, 'Threshold', 0.4);
             if ~isempty(bboxes)
-                annotated = insertObjectAnnotation(frame, 'rectangle', bboxes, labels, ...
+                displayLabels = labels;
+
+                % Sub-classify detections where ImageNet adds value
+                if detailedLabels && ~isempty(contNet)
+                    % YOLO categories where ImageNet sub-classification is useful
+                    subclassifyCategories = { ...
+                        'dog','cat','bird','horse','sheep','cow', ...    % animals
+                        'elephant','bear','zebra','giraffe', ...
+                        'sports ball', ...                               % soccer/tennis/golf/etc.
+                        'bottle', ...                                    % water/wine/beer/soda
+                        'boat', ...                                      % sailboat/canoe/speedboat
+                        'clock', ...                                     % analog/digital/wall
+                        'potted plant', ...                              % flower species
+                        'teddy bear', ...                                % stuffed animals
+                        'vase','bowl','cup'};
+                    [~, sortIdx] = sort(scores, 'descend');
+                    nClassify = min(3, numel(sortIdx));
+                    [frameH, frameW, ~] = size(frame);
+                    for ck = 1:nClassify
+                        si = sortIdx(ck);
+                        yoloLabel = lower(char(labels(si)));
+                        if ~ismember(yoloLabel, subclassifyCategories)
+                            continue;  % keep YOLO label for person, car, etc.
+                        end
+                        bb = round(bboxes(si, :));  % [x y w h]
+                        % Clamp to frame bounds
+                        x1 = max(1, bb(1));
+                        y1 = max(1, bb(2));
+                        x2 = min(frameW, bb(1) + bb(3));
+                        y2 = min(frameH, bb(2) + bb(4));
+                        if x2 <= x1 || y2 <= y1, continue; end
+                        crop = frame(y1:y2, x1:x2, :);
+
+                        try
+                            if contIsOnnx
+                                imR = imresize(crop, contInputSize);
+                                dl = dlarray(single(imR)/255, 'SSCB');
+                                sc = extractdata(predict(contNet, dl));
+                                sc = sc(:)';
+                                [maxConf, idx] = max(sc);
+                                lbl = contImgnetLabels{idx};
+                            else
+                                imR = imresize(crop, contInputSize);
+                                [lbl, scrs] = classify(contNet, imR);
+                                maxConf = max(scrs);
+                                lbl = char(lbl);
+                            end
+                            % Only replace if classifier is reasonably confident
+                            if maxConf > 0.15
+                                cleanName = sai_modernizeLabel(sai_cleanLabel(lbl));
+                                displayLabels(si) = categorical({cleanName});
+                            end
+                        catch
+                            % Keep original YOLO label on failure
+                        end
+                    end
+                end
+
+                annotated = insertObjectAnnotation(frame, 'rectangle', bboxes, displayLabels, ...
                     'FontSize', 18, 'LineWidth', 3);
                 hContImg.CData = annotated;
                 % Track stats
-                for dj = 1:numel(labels)
-                    lStr = char(labels(dj));
+                for dj = 1:numel(displayLabels)
+                    lStr = char(displayLabels(dj));
                     if ~ismember(lStr, uniqueLabels)
                         uniqueLabels{end+1} = lStr; %#ok<AGROW>
                     end
                 end
-                totalDetections = totalDetections + numel(labels);
+                totalDetections = totalDetections + numel(displayLabels);
                 contStatus.Text = sprintf('Objects found: %d | Unique types: %d', totalDetections, numel(uniqueLabels));
             else
                 hContImg.CData = frame;
@@ -1055,6 +1163,7 @@ function SnapAndIdentify_Desktop(cfg)
             netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
             ddPhotos.Enable = 'on';   ddDelay.Enable = 'on';  ddCountdown.Enable = 'on';
             promptBtn.Visible = 'off';
+            detailBtn.Visible = 'off';
             % Restore classifier if coming from continuous
             if isDetectorName(pendingNetworkName)
                 pendingNetworkName = savedClassifierName;
@@ -1065,6 +1174,7 @@ function SnapAndIdentify_Desktop(cfg)
             netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
             ddPhotos.Enable = 'off';  ddDelay.Enable = 'off';  ddCountdown.Enable = 'off';
             promptBtn.Visible = 'off';
+            detailBtn.Visible = 'on';
             % Save current classifier and default to YOLO
             if ~isDetectorName(pendingNetworkName)
                 savedClassifierName = pendingNetworkName;
@@ -1078,6 +1188,7 @@ function SnapAndIdentify_Desktop(cfg)
             netLabel.Visible = 'off';  ddNetwork.Visible = 'off';
             ddPhotos.Enable = 'on';    ddDelay.Enable = 'on';   ddCountdown.Enable = 'on';
             promptBtn.Visible = 'on';
+            detailBtn.Visible = 'off';
             % Restore classifier if coming from continuous
             if isDetectorName(pendingNetworkName)
                 pendingNetworkName = savedClassifierName;
