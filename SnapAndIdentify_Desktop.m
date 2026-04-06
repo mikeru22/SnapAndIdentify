@@ -606,12 +606,21 @@ function SnapAndIdentify_Desktop(cfg)
             'Position',[camX figH-statusH-round(80*sf) camW round(70*sf)]);
         promptLabel.Visible = 'off';
 
+        % Back to Settings button (top-left, like continuous mode)
+        backW = round(140*sf); backH = round(40*sf);
+        backPressed = false;
+        uibutton(snapFig,'push','Text','Back to Settings', ...
+            'FontSize',round(12*sf),'FontWeight','bold', ...
+            'BackgroundColor',[0.3 0.3 0.8],'FontColor','white', ...
+            'Position',[round(10*sf) figH-backH-round(40*sf) backW backH], ...
+            'ButtonPushedFcn',@(~,~) setBackPressed());
+
         % Exit button LAST so it renders on top of all other elements
         addExitButton(snapFig, sf);
 
         % Photo loop
         for p = 1:nPhotos
-            if exitRequested, break; end
+            if exitRequested || backPressed, break; end
             try
                 thumbAx.Visible = 'off'; predLabel.Text = '';
 
@@ -638,7 +647,7 @@ function SnapAndIdentify_Desktop(cfg)
                     'TimerFcn', @(~,~) updateCamPreview());
                 start(countdownTimer);
                 for w = countSec:-1:1
-                    if exitRequested, break; end
+                    if exitRequested || backPressed, break; end
                     if p == 1
                         statusLabel.Text = ehtmlf('&#x1F3AF;','Photo %d of %d &mdash; %d', p, nPhotos, w);
                     else
@@ -647,12 +656,12 @@ function SnapAndIdentify_Desktop(cfg)
                     drawnow;
                     % Interruptible 1-second wait (check exit every 0.2s)
                     for cw = 1:5
-                        if exitRequested, break; end
+                        if exitRequested || backPressed, break; end
                         pause(0.2);
                     end
                 end
                 stop(countdownTimer); delete(countdownTimer);
-                if exitRequested, break; end
+                if exitRequested || backPressed, break; end
 
                 statusLabel.Text = ehtmlf('&#x1F4F8;','SNAP!  Photo %d of %d', p, nPhotos);
                 drawnow;
@@ -691,7 +700,7 @@ function SnapAndIdentify_Desktop(cfg)
                     pName(p)  = string(sai_modernizeLabel(sai_cleanLabel(lbl)));
                     pConf(p)  = string(sai_confidenceText(max(scr)));
                 end
-                if exitRequested, break; end
+                if exitRequested || backPressed, break; end
 
                 statusLabel.Text = ehtmlf('','Photo %d of %d &mdash; Result:', p, nPhotos);
                 thumbAx.Visible = 'on';
@@ -712,7 +721,7 @@ function SnapAndIdentify_Desktop(cfg)
                 drawnow;
                 % Interruptible result display (check exit every 0.2s)
                 for rw = 1:10
-                    if exitRequested, break; end
+                    if exitRequested || backPressed, break; end
                     pause(0.2);
                 end
             catch
@@ -722,6 +731,10 @@ function SnapAndIdentify_Desktop(cfg)
         end
         delete(snapFig);
         if exitRequested, break; end
+        if backPressed
+            startPressed = false; donePressed = false; backPressed = false;
+            continue;  % go back to start screen
+        end
 
         % ==================== RESULTS GALLERY ====================
         donePressed = false;
