@@ -270,8 +270,6 @@ function SnapAndIdentify_Desktop(cfg)
         % Set initial highlight
         updateModeUI();
 
-        addExitButton(startFig, sf);
-
         % --- Camera preview ---
         previewAx = uiaxes(startFig,'Position',[previewX previewY previewW previewH]);
         previewAx.XTick = []; previewAx.YTick = [];
@@ -303,6 +301,9 @@ function SnapAndIdentify_Desktop(cfg)
             'BackgroundColor',[0.2 0.8 0.3],'FontColor','white', ...
             'Position',[(figW-btnW)/2 btnPad btnW btnH], ...
             'ButtonPushedFcn',@(~,~) onStartPressed());
+
+        % Exit button LAST so it renders on top of all other elements
+        addExitButton(startFig, sf);
 
         % Live preview via timer (non-blocking for responsive UI)
         previewTimer = timer('ExecutionMode','fixedSpacing', ...
@@ -362,7 +363,6 @@ function SnapAndIdentify_Desktop(cfg)
                 'WindowState','maximized');
             [figW, figH] = waitForMaximize(contFig);
             sf = scaleFactor(figW, figH);
-            addExitButton(contFig, sf);
 
             % Camera display
             statusBarH = round(50*sf);
@@ -405,6 +405,8 @@ function SnapAndIdentify_Desktop(cfg)
                 'BackgroundColor',[0.3 0.3 0.8],'FontColor','white', ...
                 'Position',[round(10*sf) figH-backH-round(40*sf) backW backH], ...
                 'ButtonPushedFcn',@(~,~) setBackPressed());
+            % Exit button LAST so it renders on top of all other elements
+            addExitButton(contFig, sf);
             drawnow;
 
             contNet = []; contIsOnnx = false; contImgnetLabels = {};
@@ -521,7 +523,6 @@ function SnapAndIdentify_Desktop(cfg)
             'WindowState','maximized');
         [figW, figH] = waitForMaximize(snapFig);
         sf = scaleFactor(figW, figH);
-        addExitButton(snapFig, sf);
 
         statusH    = round(100*sf);
         predLabelH = round(70*sf);
@@ -605,6 +606,9 @@ function SnapAndIdentify_Desktop(cfg)
             'Position',[camX figH-statusH-round(80*sf) camW round(70*sf)]);
         promptLabel.Visible = 'off';
 
+        % Exit button LAST so it renders on top of all other elements
+        addExitButton(snapFig, sf);
+
         % Photo loop
         for p = 1:nPhotos
             if exitRequested, break; end
@@ -648,6 +652,7 @@ function SnapAndIdentify_Desktop(cfg)
                     end
                 end
                 stop(countdownTimer); delete(countdownTimer);
+                if exitRequested, break; end
 
                 statusLabel.Text = ehtmlf('&#x1F4F8;','SNAP!  Photo %d of %d', p, nPhotos);
                 drawnow;
@@ -725,7 +730,6 @@ function SnapAndIdentify_Desktop(cfg)
         resFig = uifigure('Name','Results','Color','white','WindowState','maximized');
         [figW, figH] = waitForMaximize(resFig);
         sf = scaleFactor(figW, figH);
-        addExitButton(resFig, sf);
 
         margin   = round(12*sf);
         titleH   = round(60*sf);
@@ -833,6 +837,8 @@ function SnapAndIdentify_Desktop(cfg)
             'FontWeight','bold','BackgroundColor',[0.2 0.7 0.9],'FontColor','white', ...
             'Position',[figW-doneW-margin margin doneW doneBtnH], ...
             'ButtonPushedFcn',@(~,~) onDonePressed());
+        % Exit button LAST so it renders on top of all other elements
+        addExitButton(resFig, sf);
 
         tic;
         while ~donePressed && ~exitRequested
