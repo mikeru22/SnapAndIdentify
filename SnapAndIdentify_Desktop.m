@@ -358,7 +358,9 @@ function SnapAndIdentify_Desktop(cfg)
 
             % Camera display
             statusBarH = round(50*sf);
-            contAx = uiaxes(contFig,'Position',[0 statusBarH figW figH-statusBarH]);
+            contLabelH = round(80*sf);
+            camBottomY = statusBarH;  % adjusted below for classifier mode
+            contAx = uiaxes(contFig,'Position',[0 camBottomY figW figH-camBottomY]);
             contAx.XTick = []; contAx.YTick = [];
             contAx.Color = 'black'; contAx.XColor = 'none'; contAx.YColor = 'none';
             contAx.Toolbar.Visible = 'off'; contAx.CLim = [0 255];
@@ -379,12 +381,12 @@ function SnapAndIdentify_Desktop(cfg)
                 'HorizontalAlignment','center', ...
                 'Position',[0 0 figW statusBarH]);
 
-            % Classification label overlay (large, centered over camera — classifier mode only)
-            contLabel = uilabel(contFig,'Text','','Interpreter','html', ...
-                'FontSize',round(40*sf),'FontWeight','bold', ...
-                'FontColor','white','HorizontalAlignment','center', ...
-                'BackgroundColor',[0 0 0 0.5], ...
-                'Position',[figW*0.1 figH-round(120*sf) figW*0.8 round(100*sf)]);
+            % Classification label overlay (large, above status bar — classifier mode only)
+            contLabel = uilabel(contFig,'Text','Classifying...','Interpreter','html', ...
+                'FontSize',round(36*sf),'FontWeight','bold', ...
+                'FontColor','yellow','HorizontalAlignment','center', ...
+                'BackgroundColor','black', ...
+                'Position',[0 statusBarH figW contLabelH]);
             contLabel.Visible = 'off';
 
             % Back button
@@ -425,6 +427,8 @@ function SnapAndIdentify_Desktop(cfg)
                     end
                     contStatus.Text = sprintf('Classifying with %s...', pendingNetworkName);
                     contLabel.Visible = 'on';
+                    % Shrink camera to make room for label bar
+                    contAx.Position = [0 statusBarH+contLabelH figW figH-statusBarH-contLabelH];
                 catch ME3
                     contStatus.Text = sprintf('Network load failed: %s', ME3.message);
                 end
@@ -1025,7 +1029,7 @@ function SnapAndIdentify_Desktop(cfg)
             cleanName = sai_modernizeLabel(sai_cleanLabel(lbl));
             confStr = sai_confidenceText(maxScr);
             contLabel.Text = sprintf( ...
-                '<html><body style="%s"><span style="font-size:1.3em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
+                '<html><body style="%s"><span style="font-size:1.4em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
                 emojiFontCSS(), emoji, cleanName, confStr);
             totalDetections = totalDetections + 1;
             if ~ismember(cleanName, uniqueLabels)
@@ -1033,7 +1037,12 @@ function SnapAndIdentify_Desktop(cfg)
             end
             contStatus.Text = sprintf('Classifications: %d | Unique: %d', totalDetections, numel(uniqueLabels));
             drawnow limitrate;
-        catch
+        catch ME4
+            try
+                contLabel.Text = sprintf('Error: %s', ME4.message);
+                drawnow limitrate;
+            catch
+            end
         end
     end
 
