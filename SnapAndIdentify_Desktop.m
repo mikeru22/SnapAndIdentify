@@ -7,9 +7,18 @@ function SnapAndIdentify_Desktop(cfg)
     startPressed  = false;
     donePressed   = false;
     exitRequested = false;
+    backPressed   = false;              % continuous mode back button
     feedback      = zeros(1, cfg.numPhotos);
-    currentMode   = cfg.gameMode;       % 'objectid' or 'emotion'
+    currentMode   = cfg.gameMode;       % 'objectid', 'emotion', or 'continuous'
     pendingNetworkName = cfg.networkName;
+    promptMode    = false;              % guided emotion prompts
+
+    % Continuous mode shared state (for nested callbacks)
+    detector       = [];
+    hContImg       = [];
+    contStatus     = [];
+    totalDetections = 0;
+    uniqueLabels    = {};
 
     % Logo path
     logoFile = fullfile(fileparts(mfilename('fullpath')), 'mathworks-logo-full-color-rgb.png');
@@ -144,8 +153,8 @@ function SnapAndIdentify_Desktop(cfg)
         yy = yy - rowH_s - padS;
 
         % AI Network dropdown (hidden in emotion mode, only shows installed networks)
-        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet', 'resnet101'};
-        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet', 'resnet101'};
+        allNetNames  = {'googlenet','resnet18','resnet50','squeezenet','resnet101','mobilenetv2','efficientnetb0','nasnetmobile','shufflenet','mobilenetv3small','mobilenetv3large','efficientnetlite4'};
+        allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet','ResNet-101','MobileNet-v2','EfficientNet-b0','NASNet-Mobile','ShuffleNet','MobileNetV3-Small','MobileNetV3-Large','EfficientNet-Lite4'};
         if isfield(cfg, 'availableNetworks') && ~isempty(cfg.availableNetworks)
             availNets = cfg.availableNetworks;
         else
@@ -194,35 +203,45 @@ function SnapAndIdentify_Desktop(cfg)
             'ValueChangedFcn',@(src,~) onCameraSelect(src.Value));
         yy = yy - rowH_s - padS;
 
-        % Mode selection: two side-by-side buttons
+        % Mode selection: three side-by-side buttons + prompt toggle
         modeBtnH = round(38*sf);
-        modeBtnW = round((settingsW - 3*padS) / 2);
+        modeBtnW = round((settingsW - 4*padS) / 3);
         modeActiveColor   = [0.4 0.2 0.7];
         modeInactiveColor = [0.35 0.35 0.35];
+        modeRow2Y = settingsY + padS;
+        modeRow1Y = modeRow2Y + modeBtnH + round(4*sf);
 
         objBtn = uibutton(startFig,'push', ...
             'Text','<html><body>&#x1F50D; Object ID</body></html>', ...
             'Interpreter','html', ...
-            'FontSize',round(14*sf),'FontWeight','bold','FontColor','white', ...
-            'Position',[settingsX+padS settingsY+padS modeBtnW modeBtnH], ...
+            'FontSize',round(12*sf),'FontWeight','bold','FontColor','white', ...
+            'Position',[settingsX+padS modeRow1Y modeBtnW modeBtnH], ...
             'ButtonPushedFcn',@(~,~) onModeSelect('objectid'));
+        contBtn = uibutton(startFig,'push', ...
+            'Text','<html><body>&#x1F4F7; Continuous</body></html>', ...
+            'Interpreter','html', ...
+            'FontSize',round(12*sf),'FontWeight','bold','FontColor','white', ...
+            'Position',[settingsX+2*padS+modeBtnW modeRow1Y modeBtnW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onModeSelect('continuous'));
         emoBtn = uibutton(startFig,'push', ...
             'Text','<html><body>&#x1F60A; Emotion</body></html>', ...
             'Interpreter','html', ...
-            'FontSize',round(14*sf),'FontWeight','bold','FontColor','white', ...
-            'Position',[settingsX+2*padS+modeBtnW settingsY+padS modeBtnW modeBtnH], ...
+            'FontSize',round(12*sf),'FontWeight','bold','FontColor','white', ...
+            'Position',[settingsX+3*padS+2*modeBtnW modeRow1Y modeBtnW modeBtnH], ...
             'ButtonPushedFcn',@(~,~) onModeSelect('emotion'));
 
+        % Guided Prompts toggle (only visible in emotion mode)
+        promptBtnW = settingsW - 2*padS;
+        promptBtn = uibutton(startFig,'push', ...
+            'Text','Guided Prompts: OFF', ...
+            'FontSize',round(11*sf),'FontWeight','bold','FontColor','white', ...
+            'BackgroundColor',[0.35 0.35 0.35], ...
+            'Position',[settingsX+padS modeRow2Y promptBtnW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onPromptToggle());
+        promptBtn.Visible = 'off';
+
         % Set initial highlight
-        if strcmpi(currentMode,'emotion')
-            emoBtn.BackgroundColor = modeActiveColor;
-            objBtn.BackgroundColor = modeInactiveColor;
-            netLabel.Visible = 'off';
-            ddNetwork.Visible = 'off';
-        else
-            objBtn.BackgroundColor = modeActiveColor;
-            emoBtn.BackgroundColor = modeInactiveColor;
-        end
+        updateModeUI();
 
         addExitButton(startFig, sf);
 
@@ -287,9 +306,14 @@ function SnapAndIdentify_Desktop(cfg)
                 'HorizontalAlignment','center','Position',[0 0 figW2 figH2]);
             drawnow;
             try
-                [net, inputSize] = sai_loadNetwork(pendingNetworkName);
-                S.net = net; S.inputSize = inputSize;
+                [net, inputSize, isOnnx] = sai_loadNetwork(pendingNetworkName);
+                S.net = net; S.inputSize = inputSize; S.isOnnx = isOnnx;
                 S.networkName = pendingNetworkName;
+                if isOnnx
+                    S.imagenetLabels = sai_imagenetLabels();
+                else
+                    S.imagenetLabels = {};
+                end
             catch ME2
                 uilabel(loadFig, ...
                     'Text',ehtml('&#x274C;',['Failed: ' ME2.message]), ...
@@ -303,11 +327,104 @@ function SnapAndIdentify_Desktop(cfg)
             delete(startFig);
         end
 
+        % ==================== CONTINUOUS MODE ====================
+        if strcmpi(currentMode, 'continuous')
+            contFig = uifigure('Name','Continuous Detection','Color','black', ...
+                'WindowState','maximized');
+            [figW, figH] = waitForMaximize(contFig);
+            sf = scaleFactor(figW, figH);
+            addExitButton(contFig, sf);
+
+            % Camera display
+            contAx = uiaxes(contFig,'Position',[0 round(50*sf) figW figH-round(50*sf)]);
+            contAx.XTick = []; contAx.YTick = [];
+            contAx.Color = 'black'; contAx.XColor = 'none'; contAx.YColor = 'none';
+            contAx.Toolbar.Visible = 'off'; contAx.CLim = [0 255];
+
+            try
+                initFrame = sai_takePhoto(cam);
+                hContImg = image(contAx, initFrame);
+                axis(contAx, 'image');
+                contAx.XTick = []; contAx.YTick = [];
+            catch
+                hContImg = [];
+            end
+
+            % Status overlay
+            contStatus = uilabel(contFig,'Text','Loading detector...', ...
+                'FontSize',round(18*sf),'FontColor','yellow', ...
+                'BackgroundColor',[0 0 0 0.5], ...
+                'HorizontalAlignment','center', ...
+                'Position',[0 0 figW round(50*sf)]);
+
+            % Back button
+            backW = round(140*sf); backH = round(40*sf);
+            backPressed = false;
+            uibutton(contFig,'push','Text','Back to Settings', ...
+                'FontSize',round(12*sf),'FontWeight','bold', ...
+                'BackgroundColor',[0.3 0.3 0.8],'FontColor','white', ...
+                'Position',[round(10*sf) figH-backH-round(40*sf) backW backH], ...
+                'ButtonPushedFcn',@(~,~) setBackPressed());
+            drawnow;
+
+            % Load detector
+            detector = [];
+            hasDetectors = isfield(cfg, 'availableDetectors') && ~isempty(cfg.availableDetectors);
+            if hasDetectors
+                try
+                    detector = sai_loadDetector(cfg.availableDetectors{1});
+                    contStatus.Text = 'Detecting objects...';
+                catch ME3
+                    contStatus.Text = sprintf('Detector load failed: %s', ME3.message);
+                end
+            else
+                contStatus.Text = 'No YOLO detector installed. Install via Add-On Explorer.';
+            end
+            drawnow;
+
+            totalDetections = 0;
+            uniqueLabels = {};
+
+            if ~isempty(detector) && ~isempty(hContImg)
+                % Timer-based detection loop
+                detTimer = timer('ExecutionMode','fixedSpacing', ...
+                    'Period', 0.15, 'BusyMode','drop', ...
+                    'TimerFcn', @(~,~) detectAndDisplay());
+                start(detTimer);
+            end
+
+            % Wait for back or exit
+            while ~backPressed && ~exitRequested
+                if ~isvalid(contFig), break; end
+                pause(0.2);
+            end
+
+            if ~isempty(detector) && ~isempty(hContImg)
+                try stop(detTimer); delete(detTimer); catch, end
+            end
+            if isvalid(contFig), delete(contFig); end
+
+            if exitRequested, break; end
+            startPressed = false; donePressed = false;
+            continue;  % go back to start screen
+        end
+
         % ==================== TAKE PHOTOS ====================
-        photos = cell(1, cfg.numPhotos);
-        pEmoji = strings(1, cfg.numPhotos);
-        pName  = strings(1, cfg.numPhotos);
-        pConf  = strings(1, cfg.numPhotos);
+        % Determine photo count and prompt setup
+        isPromptMode = promptMode && strcmpi(currentMode, 'emotion');
+        if isPromptMode
+            promptEmotions = {'neutral','happy','sad','surprise','angry'};
+            promptEmojiMap = sai_buildEmotionEmojiMap();
+            nPhotos = numel(promptEmotions);
+        else
+            nPhotos = cfg.numPhotos;
+        end
+        photos = cell(1, nPhotos);
+        pEmoji = strings(1, nPhotos);
+        pName  = strings(1, nPhotos);
+        pConf  = strings(1, nPhotos);
+        pPrompt      = strings(1, nPhotos);  % prompted emotion (raw key)
+        pPromptEmoji = strings(1, nPhotos);  % prompted emoji HTML
 
         snapFig = uifigure('Name','Taking Photos...','Color','black', ...
             'WindowState','maximized');
@@ -325,7 +442,7 @@ function SnapAndIdentify_Desktop(cfg)
         % Emotion guide panel on right side
         guideW = 0;
         if strcmpi(currentMode, 'emotion')
-            guideW = round(240*sf);
+            guideW = round(320*sf);
         end
 
         camW = min(figW - 2*pad - guideW, camH*4/3);
@@ -374,25 +491,46 @@ function SnapAndIdentify_Desktop(cfg)
                 'Position',[guideX camY guideW camH]);
             emotionLabels = sai_emotionLabels();
             guideEmojiMap = sai_buildEmotionEmojiMap();
-            eRowH = round(camH / (numel(emotionLabels)+1));
-            eFS = round(16*sf);
+            eRowH = round((camH - round(40*sf)) / numel(emotionLabels));
             for ei = 1:numel(emotionLabels)
                 ey = camH - round(40*sf) - ei*eRowH;
                 emojiForLabel = guideEmojiMap(emotionLabels{ei});
-                htmlStr = sprintf('<html><body style="%s"><span style="font-size:1.4em;">%s</span> %s</body></html>', ...
+                htmlStr = sprintf(['<html><body style="text-align:center;%s">' ...
+                    '<span style="font-size:2.5em;">%s</span><br/>' ...
+                    '<b>%s</b></body></html>'], ...
                     emojiFontCSS(), emojiForLabel, sai_cleanLabel(emotionLabels{ei}));
                 uilabel(guidePanel,'Text',htmlStr, ...
                     'Interpreter','html', ...
-                    'FontSize',eFS,'FontColor','white', ...
-                    'Position',[round(8*sf) ey guideW-round(16*sf) eRowH]);
+                    'FontSize',round(18*sf),'FontColor','white', ...
+                    'HorizontalAlignment','center', ...
+                    'Position',[round(4*sf) ey guideW-round(8*sf) eRowH]);
             end
         end
 
+        % Prompt label (only used in guided prompt mode, placed above camera)
+        promptLabel = uilabel(snapFig,'Text','','Interpreter','html', ...
+            'FontSize',round(36*sf),'FontWeight','bold', ...
+            'FontColor','white','HorizontalAlignment','center', ...
+            'Position',[camX figH-statusH-round(80*sf) camW round(70*sf)]);
+        promptLabel.Visible = 'off';
+
         % Photo loop
-        for p = 1:cfg.numPhotos
+        for p = 1:nPhotos
             if exitRequested, break; end
             try
                 thumbAx.Visible = 'off'; predLabel.Text = '';
+
+                % Show prompt emoji if in guided prompt mode
+                if isPromptMode
+                    pPrompt(p) = string(promptEmotions{p});
+                    pPromptEmoji(p) = string(promptEmojiMap(promptEmotions{p}));
+                    promptLabel.Text = sprintf( ...
+                        '<html><body style="text-align:center;%s"><span style="font-size:2.0em;">%s</span> Try to look <b>%s</b>!</body></html>', ...
+                        emojiFontCSS(), char(pPromptEmoji(p)), upper(char(pPrompt(p))));
+                    promptLabel.Visible = 'on';
+                    drawnow;
+                end
+
                 if p == 1
                     countSec = cfg.countdownBefore;
                 else
@@ -407,7 +545,7 @@ function SnapAndIdentify_Desktop(cfg)
                 for w = countSec:-1:1
                     if exitRequested, break; end
                     if p == 1
-                        statusLabel.Text = ehtmlf('&#x1F3AF;','Photo %d of %d &mdash; %d', p, cfg.numPhotos, w);
+                        statusLabel.Text = ehtmlf('&#x1F3AF;','Photo %d of %d &mdash; %d', p, nPhotos, w);
                     else
                         statusLabel.Text = ehtmlf('','Next photo in %d...', w);
                     end
@@ -416,12 +554,17 @@ function SnapAndIdentify_Desktop(cfg)
                 end
                 stop(countdownTimer); delete(countdownTimer);
 
-                statusLabel.Text = ehtmlf('&#x1F4F8;','SNAP!  Photo %d of %d', p, cfg.numPhotos);
+                statusLabel.Text = ehtmlf('&#x1F4F8;','SNAP!  Photo %d of %d', p, nPhotos);
                 drawnow;
                 img = sai_takePhoto(cam);
                 photos{p} = img;
                 hCam.CData = img;
                 drawnow;
+
+                % Hide prompt during classification
+                if isPromptMode
+                    promptLabel.Visible = 'off';
+                end
 
                 % Classify
                 if strcmpi(currentMode, 'emotion') && ~isempty(S.emotionNet)
@@ -429,19 +572,42 @@ function SnapAndIdentify_Desktop(cfg)
                     pEmoji(p) = string(em);
                     pName(p)  = string(lb);
                     pConf(p)  = string(ct);
+                elseif S.isOnnx
+                    % ONNX model: use predict + argmax + label lookup
+                    imResized = imresize(img, inputSize);
+                    imSingle = single(imResized) / 255;
+                    dl = dlarray(imSingle, 'SSCB');
+                    scores = extractdata(predict(net, dl));
+                    scores = scores(:)';
+                    [maxScr, idx] = max(scores);
+                    lbl = S.imagenetLabels{idx};
+                    pEmoji(p) = string(sai_lookupEmoji(lbl, emojiMap));
+                    pName(p)  = string(sai_modernizeLabel(sai_cleanLabel(lbl)));
+                    pConf(p)  = string(sai_confidenceText(maxScr));
                 else
                     imResized = imresize(img, inputSize);
                     [lbl, scr] = classify(net, imResized);
                     pEmoji(p) = string(sai_lookupEmoji(lbl, emojiMap));
-                    pName(p)  = string(sai_cleanLabel(lbl));
+                    pName(p)  = string(sai_modernizeLabel(sai_cleanLabel(lbl)));
                     pConf(p)  = string(sai_confidenceText(max(scr)));
                 end
 
-                statusLabel.Text = ehtmlf('','Photo %d of %d &mdash; Result:', p, cfg.numPhotos);
+                statusLabel.Text = ehtmlf('','Photo %d of %d &mdash; Result:', p, nPhotos);
                 thumbAx.Visible = 'on';
                 image(thumbAx, img); thumbAx.XTick = []; thumbAx.YTick = [];
                 axis(thumbAx, 'image');
-                predLabel.Text = ehtmlPred(pEmoji(p), pName(p), pConf(p));
+
+                % Show result (with prompt comparison if guided mode)
+                if isPromptMode
+                    isMatch = strcmpi(pPrompt(p), pName(p));
+                    if isMatch, matchStr = '&#x2705;'; else, matchStr = '&#x274C;'; end
+                    predLabel.Text = sprintf( ...
+                        '<html><body style="%s">Prompt: %s <b>%s</b> &rarr; Detected: %s <b>%s</b> %s</body></html>', ...
+                        emojiFontCSS(), char(pPromptEmoji(p)), sai_cleanLabel(char(pPrompt(p))), ...
+                        char(pEmoji(p)), char(pName(p)), matchStr);
+                else
+                    predLabel.Text = ehtmlPred(pEmoji(p), pName(p), pConf(p));
+                end
                 drawnow; pause(2);
             catch
                 photos{p} = uint8(128*ones(224,224,3));
@@ -453,7 +619,7 @@ function SnapAndIdentify_Desktop(cfg)
 
         % ==================== RESULTS GALLERY ====================
         donePressed = false;
-        feedback = zeros(1, cfg.numPhotos);
+        feedback = zeros(1, nPhotos);
 
         resFig = uifigure('Name','Results','Color','white','WindowState','maximized');
         [figW, figH] = waitForMaximize(resFig);
@@ -465,7 +631,7 @@ function SnapAndIdentify_Desktop(cfg)
         bottomH  = round(70*sf);
         gapV     = round(6*sf);
         availH   = figH - titleH - bottomH - 2*margin;
-        rowH     = min(floor((availH - (cfg.numPhotos-1)*gapV) / cfg.numPhotos), round(200*sf));
+        rowH     = min(floor((availH - (nPhotos-1)*gapV) / nPhotos), round(200*sf));
         imgSize  = rowH - 4;
         thumbBtnW   = max(round(50*sf), min(round(80*sf), floor(rowH*0.65)));
         thumbBtnGap = round(8*sf);
@@ -477,55 +643,91 @@ function SnapAndIdentify_Desktop(cfg)
             'Position',[0 bottomH figW figH-titleH-bottomH], ...
             'BackgroundColor','white','BorderType','none', ...
             'Scrollable','on');
-        panelH = max(availH, cfg.numPhotos*(rowH+gapV));
+        panelH = max(availH, nPhotos*(rowH+gapV));
 
-        uilabel(resFig, ...
-            'Text',['<html><body style="text-align:center;font-weight:bold;' emojiFontCSS() '">&#x1F3C6; Was the Computer Right? Tap &#x1F44D; or &#x1F44E; !</body></html>'], ...
-            'Interpreter','html', ...
+        if isPromptMode
+            titleText = ['<html><body style="text-align:center;font-weight:bold;' emojiFontCSS() '">&#x1F3AD; How did you do? Prompt vs. Computer!</body></html>'];
+        else
+            titleText = ['<html><body style="text-align:center;font-weight:bold;' emojiFontCSS() '">&#x1F3C6; Was the Computer Right? Tap &#x1F44D; or &#x1F44E; !</body></html>'];
+        end
+        uilabel(resFig,'Text',titleText,'Interpreter','html', ...
             'FontSize',round(28*sf),'FontWeight','bold', ...
             'HorizontalAlignment','center','Position',[0 figH-titleH-margin figW titleH]);
 
-        for p = 1:cfg.numPhotos
+        for p = 1:nPhotos
             y = panelH - p*(rowH+gapV) + gapV;
             thumbFile = fullfile(tempdir, sprintf('snap_thumb_%d.png', p));
             imwrite(imresize(photos{p}, [imgSize imgSize]), thumbFile);
 
-            % Center the row: image + gap + label + gap + buttons as one group
-            btnAreaW = 2*thumbBtnW + thumbBtnGap;
-            labelW   = round(450*sf);
-            gapH     = round(12*sf);
-            contentW = imgSize + gapH + labelW + gapH + btnAreaW;
-            rowX     = max(margin, (figW - contentW)/2);
+            if isPromptMode
+                % Prompt mode: show prompt vs detected with match indicator
+                isMatch = strcmpi(pPrompt(p), pName(p));
+                matchStr = char("&#x2705;" * isMatch + "&#x274C;" * ~isMatch);
+                rowLabelText = sprintf( ...
+                    '<html><body style="%s">Prompt: %s <b>%s</b> &rarr; Detected: %s <b>%s</b> %s</body></html>', ...
+                    emojiFontCSS(), char(pPromptEmoji(p)), sai_cleanLabel(char(pPrompt(p))), ...
+                    char(pEmoji(p)), char(pName(p)), matchStr);
+                labelW = round(550*sf);
+                gapH   = round(12*sf);
+                contentW = imgSize + gapH + labelW;
+                rowX = max(margin, (figW - contentW)/2);
 
-            uiimage(scrollPanel,'ImageSource',thumbFile, ...
-                'Position',[rowX y imgSize imgSize],'ScaleMethod','fit');
+                uiimage(scrollPanel,'ImageSource',thumbFile, ...
+                    'Position',[rowX y imgSize imgSize],'ScaleMethod','fit');
+                labelX = rowX + imgSize + gapH;
+                uilabel(scrollPanel,'Text',rowLabelText,'Interpreter','html', ...
+                    'FontSize',labelFS,'FontWeight','bold','VerticalAlignment','center', ...
+                    'WordWrap','on','Position',[labelX y labelW rowH]);
+            else
+                % Normal mode: show result + thumbs up/down buttons
+                btnAreaW = 2*thumbBtnW + thumbBtnGap;
+                labelW   = round(450*sf);
+                gapH     = round(12*sf);
+                contentW = imgSize + gapH + labelW + gapH + btnAreaW;
+                rowX     = max(margin, (figW - contentW)/2);
 
-            labelX = rowX + imgSize + gapH;
-            uilabel(scrollPanel, ...
-                'Text',ehtmlPred(pEmoji(p), pName(p), pConf(p)), ...
-                'Interpreter','html', ...
-                'FontSize',labelFS,'FontWeight','bold','VerticalAlignment','center', ...
-                'WordWrap','on','Position',[labelX y labelW rowH]);
+                uiimage(scrollPanel,'ImageSource',thumbFile, ...
+                    'Position',[rowX y imgSize imgSize],'ScaleMethod','fit');
 
-            thumbUpX = labelX + labelW + gapH;
-            btnY = y + (rowH - thumbBtnW)/2;
-            upBtn = uibutton(scrollPanel,'push','Text','👍','FontSize',thumbFS, ...
-                'BackgroundColor',[0.85 0.95 0.85],'Position',[thumbUpX btnY thumbBtnW thumbBtnW]);
-            dnBtn = uibutton(scrollPanel,'push','Text','👎','FontSize',thumbFS, ...
-                'BackgroundColor',[0.95 0.85 0.85],'Position',[thumbUpX+thumbBtnW+thumbBtnGap btnY thumbBtnW thumbBtnW]);
-            upBtn.ButtonPushedFcn = @(~,~) onFeedback(upBtn, dnBtn, p, 1);
-            dnBtn.ButtonPushedFcn = @(~,~) onFeedback(upBtn, dnBtn, p, -1);
+                labelX = rowX + imgSize + gapH;
+                uilabel(scrollPanel, ...
+                    'Text',ehtmlPred(pEmoji(p), pName(p), pConf(p)), ...
+                    'Interpreter','html', ...
+                    'FontSize',labelFS,'FontWeight','bold','VerticalAlignment','center', ...
+                    'WordWrap','on','Position',[labelX y labelW rowH]);
+
+                thumbUpX = labelX + labelW + gapH;
+                btnY = y + (rowH - thumbBtnW)/2;
+                upBtn = uibutton(scrollPanel,'push','Text','👍','FontSize',thumbFS, ...
+                    'BackgroundColor',[0.85 0.95 0.85],'Position',[thumbUpX btnY thumbBtnW thumbBtnW]);
+                dnBtn = uibutton(scrollPanel,'push','Text','👎','FontSize',thumbFS, ...
+                    'BackgroundColor',[0.95 0.85 0.85],'Position',[thumbUpX+thumbBtnW+thumbBtnGap btnY thumbBtnW thumbBtnW]);
+                upBtn.ButtonPushedFcn = @(~,~) onFeedback(upBtn, dnBtn, p, 1);
+                dnBtn.ButtonPushedFcn = @(~,~) onFeedback(upBtn, dnBtn, p, -1);
+            end
         end
 
         doneW = min(round(180*sf), figW*0.22);
         doneBtnH = bottomH - 2*margin;
-        scoreLbl = uilabel(resFig, ...
-            'Text',['<html><body style="' emojiFontCSS() '">Tap &#x1F44D; or &#x1F44E; for each, then DONE!</body></html>'], ...
-            'Interpreter','html', ...
-            'FontSize',round(16*sf),'FontColor',[0.4 0.4 0.4], ...
-            'HorizontalAlignment','center','VerticalAlignment','center', ...
-            'WordWrap','on', ...
-            'Position',[margin margin figW-doneW-3*margin doneBtnH]);
+        if isPromptMode
+            % Auto-calculate score for prompt mode
+            numMatched = sum(arrayfun(@(i) strcmpi(pPrompt(i), pName(i)), 1:nPhotos));
+            scoreLbl = uilabel(resFig, ...
+                'Text',sprintf('<html><body style="%s">You matched %d out of %d prompts!</body></html>', emojiFontCSS(), numMatched, nPhotos), ...
+                'Interpreter','html', ...
+                'FontSize',round(18*sf),'FontColor',[0.2 0.2 0.6], ...
+                'HorizontalAlignment','center','VerticalAlignment','center', ...
+                'WordWrap','on', ...
+                'Position',[margin margin figW-doneW-3*margin doneBtnH]);
+        else
+            scoreLbl = uilabel(resFig, ...
+                'Text',['<html><body style="' emojiFontCSS() '">Tap &#x1F44D; or &#x1F44E; for each, then DONE!</body></html>'], ...
+                'Interpreter','html', ...
+                'FontSize',round(16*sf),'FontColor',[0.4 0.4 0.4], ...
+                'HorizontalAlignment','center','VerticalAlignment','center', ...
+                'WordWrap','on', ...
+                'Position',[margin margin figW-doneW-3*margin doneBtnH]);
+        end
         uibutton(resFig,'push','Text','DONE!','FontSize',round(22*sf), ...
             'FontWeight','bold','BackgroundColor',[0.2 0.7 0.9],'FontColor','white', ...
             'Position',[figW-doneW-margin margin doneW doneBtnH], ...
@@ -535,9 +737,11 @@ function SnapAndIdentify_Desktop(cfg)
         while ~donePressed && ~exitRequested
             if ~isvalid(resFig), break; end
             if toc > cfg.resetTimeout, break; end
-            nC = sum(feedback==1); nR = sum(feedback~=0);
-            if nR > 0
-                scoreLbl.Text = sprintf('<html><body>Score so far: %d out of %d right!</body></html>', nC, nR);
+            if ~isPromptMode
+                nC = sum(feedback==1); nR = sum(feedback~=0);
+                if nR > 0
+                    scoreLbl.Text = sprintf('<html><body>Score so far: %d out of %d right!</body></html>', nC, nR);
+                end
             end
             pause(0.3); drawnow;
         end
@@ -548,8 +752,13 @@ function SnapAndIdentify_Desktop(cfg)
 
         % ==================== SCORE SUMMARY ====================
         if isvalid(resFig)
-            numCorrect = sum(feedback==1);
-            numTotal   = sum(feedback~=0);
+            if isPromptMode
+                numCorrect = sum(arrayfun(@(i) strcmpi(pPrompt(i), pName(i)), 1:nPhotos));
+                numTotal   = nPhotos;
+            else
+                numCorrect = sum(feedback==1);
+                numTotal   = sum(feedback~=0);
+            end
             delete(resFig);
             scoreFig = uifigure('Name','Final Score!','Color',[0.18 0.55 0.78], ...
                 'WindowState','maximized');
@@ -604,7 +813,7 @@ function SnapAndIdentify_Desktop(cfg)
 
         if exitRequested, break; end
         startPressed = false; donePressed = false;
-        feedback = zeros(1, cfg.numPhotos);
+        feedback = zeros(1, nPhotos);
     end
 
     % Cleanup on exit
@@ -616,7 +825,8 @@ function SnapAndIdentify_Desktop(cfg)
            contains(allFigs(f).Name, 'Taking Photos') || ...
            contains(allFigs(f).Name, 'Results') || ...
            contains(allFigs(f).Name, 'Final Score') || ...
-           contains(allFigs(f).Name, 'Loading Network')
+           contains(allFigs(f).Name, 'Loading Network') || ...
+           contains(allFigs(f).Name, 'Continuous Detection')
             delete(allFigs(f));
         end
     end
@@ -697,16 +907,68 @@ function SnapAndIdentify_Desktop(cfg)
 
     function onModeSelect(mode)
         currentMode = mode;
-        if strcmpi(mode, 'emotion')
-            emoBtn.BackgroundColor = modeActiveColor;
-            objBtn.BackgroundColor = modeInactiveColor;
-            netLabel.Visible = 'off';
-            ddNetwork.Visible = 'off';
+        updateModeUI();
+    end
+
+    function onPromptToggle()
+        promptMode = ~promptMode;
+        if promptMode
+            promptBtn.Text = 'Guided Prompts: ON';
+            promptBtn.BackgroundColor = [0.2 0.7 0.4];
         else
+            promptBtn.Text = 'Guided Prompts: OFF';
+            promptBtn.BackgroundColor = [0.35 0.35 0.35];
+        end
+    end
+
+    function setBackPressed()
+        backPressed = true;
+    end
+
+    function detectAndDisplay()
+        try
+            frame = snapshot(cam);
+            [bboxes, scores, labels] = detect(detector, frame, 'Threshold', 0.4);
+            if ~isempty(bboxes)
+                annotated = insertObjectAnnotation(frame, 'rectangle', bboxes, labels, ...
+                    'FontSize', 18, 'LineWidth', 3);
+                hContImg.CData = annotated;
+                % Track stats
+                for di = 1:numel(labels)
+                    lStr = char(labels(di));
+                    if ~ismember(lStr, uniqueLabels)
+                        uniqueLabels{end+1} = lStr; %#ok<AGROW>
+                    end
+                end
+                totalDetections = totalDetections + numel(labels);
+                contStatus.Text = sprintf('Objects found: %d | Unique types: %d', totalDetections, numel(uniqueLabels));
+            else
+                hContImg.CData = frame;
+            end
+            drawnow limitrate;
+        catch
+        end
+    end
+
+    function updateModeUI()
+        objBtn.BackgroundColor  = modeInactiveColor;
+        contBtn.BackgroundColor = modeInactiveColor;
+        emoBtn.BackgroundColor  = modeInactiveColor;
+        if strcmpi(currentMode, 'objectid')
             objBtn.BackgroundColor = modeActiveColor;
-            emoBtn.BackgroundColor = modeInactiveColor;
-            netLabel.Visible = 'on';
-            ddNetwork.Visible = 'on';
+            netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
+            ddPhotos.Enable = 'on';   ddDelay.Enable = 'on';  ddCountdown.Enable = 'on';
+            promptBtn.Visible = 'off';
+        elseif strcmpi(currentMode, 'continuous')
+            contBtn.BackgroundColor = modeActiveColor;
+            netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
+            ddPhotos.Enable = 'off';  ddDelay.Enable = 'off';  ddCountdown.Enable = 'off';
+            promptBtn.Visible = 'off';
+        elseif strcmpi(currentMode, 'emotion')
+            emoBtn.BackgroundColor = modeActiveColor;
+            netLabel.Visible = 'off';  ddNetwork.Visible = 'off';
+            ddPhotos.Enable = 'on';    ddDelay.Enable = 'on';   ddCountdown.Enable = 'on';
+            promptBtn.Visible = 'on';
         end
     end
 end

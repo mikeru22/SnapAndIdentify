@@ -1,7 +1,7 @@
-function availableNetworks = sai_checkDependencies()
+function [availableNetworks, availableDetectors] = sai_checkDependencies()
 %SAI_CHECKDEPENDENCIES  Verify that required toolboxes and add-ons are installed.
-%   availableNetworks = sai_checkDependencies() returns a cell array of
-%   network names (e.g. {'googlenet','resnet18'}) that are installed and
+%   [availableNetworks, availableDetectors] = sai_checkDependencies()
+%   returns cell arrays of network/detector names that are installed and
 %   ready to use. Errors if any required core dependency is missing.
 %   Automatically installs GoogLeNet support package if not present.
 
@@ -52,11 +52,15 @@ function availableNetworks = sai_checkDependencies()
     % --- Check pretrained network support packages ---
     fprintf('\n--- Checking AI network support packages ---\n');
     networkList = {
-        'googlenet',   'GoogLeNet',    'Deep Learning Toolbox Model for GoogLeNet Network'
-        'resnet18',    'ResNet-18',    'Deep Learning Toolbox Model for ResNet-18 Network'
-        'resnet50',    'ResNet-50',    'Deep Learning Toolbox Model for ResNet-50 Network'
-        'squeezenet',  'SqueezeNet',   'Deep Learning Toolbox Model for SqueezeNet Network'
-        'resnet101',   'Resnet101',    'Deep Learning Toolbox Model for SqueezeNet Network'
+        'googlenet',     'GoogLeNet',      'Deep Learning Toolbox Model for GoogLeNet Network'
+        'resnet18',      'ResNet-18',       'Deep Learning Toolbox Model for ResNet-18 Network'
+        'resnet50',      'ResNet-50',       'Deep Learning Toolbox Model for ResNet-50 Network'
+        'squeezenet',    'SqueezeNet',      'Deep Learning Toolbox Model for SqueezeNet Network'
+        'resnet101',     'ResNet-101',      'Deep Learning Toolbox Model for ResNet-101 Network'
+        'mobilenetv2',   'MobileNet-v2',    'Deep Learning Toolbox Model for MobileNet-v2 Network'
+        'efficientnetb0','EfficientNet-b0', 'Deep Learning Toolbox Model for EfficientNet-b0 Network'
+        'nasnetmobile',  'NASNet-Mobile',   'Deep Learning Toolbox Model for NASNet-Mobile Network'
+        'shufflenet',    'ShuffleNet',      'Deep Learning Toolbox Model for ShuffleNet Network'
     };
 
     availableNetworks = {};
@@ -70,6 +74,28 @@ function availableNetworks = sai_checkDependencies()
             availableNetworks{end+1} = funcName; %#ok<AGROW>
         catch
             fprintf('  [MISSING]  %s (%s)\n', displayName, pkgName);
+        end
+    end
+
+    % --- Check ONNX-imported networks (check for .mat files) ---
+    fprintf('\n--- Checking ONNX-imported networks ---\n');
+    onnxNetworks = {
+        'mobilenetv3small',  'MobileNetV3-Small',  'mobilenetv3_small.mat'
+        'mobilenetv3large',  'MobileNetV3-Large',  'mobilenetv3_large.mat'
+        'efficientnetlite4', 'EfficientNet-Lite4',  'efficientnet_lite4.mat'
+    };
+    for i = 1:size(onnxNetworks, 1)
+        netKey      = onnxNetworks{i, 1};
+        displayName = onnxNetworks{i, 2};
+        matName     = onnxNetworks{i, 3};
+        matPath = fullfile(fileparts(mfilename('fullpath')), matName);
+        if isfile(matPath)
+            fprintf('  [OK]       %s (%s found)\n', displayName, matName);
+            availableNetworks{end+1} = netKey; %#ok<AGROW>
+        else
+            fprintf('  [AVAILABLE] %s (run sai_setupOnnxNetwork(''%s'') to install)\n', displayName, netKey);
+            % Still add to available list — sai_loadNetwork will auto-setup on first use
+            availableNetworks{end+1} = netKey; %#ok<AGROW>
         end
     end
 
@@ -92,6 +118,24 @@ function availableNetworks = sai_checkDependencies()
                 fprintf('             Home > Add-Ons > Search for "Deep Learning Toolbox Model for GoogLeNet Network"\n');
                 allOk = false;
             end
+        end
+    end
+
+    % --- Check YOLO object detectors ---
+    fprintf('\n--- Checking object detectors (for Continuous mode) ---\n');
+    availableDetectors = {};
+    detectorList = {
+        'tiny-yolov4-coco', 'Tiny YOLOv4 (COCO)'
+    };
+    for i = 1:size(detectorList, 1)
+        detName     = detectorList{i, 1};
+        displayName = detectorList{i, 2};
+        try
+            yolov4ObjectDetector(detName); %#ok<NASGU>
+            fprintf('  [OK]       %s\n', displayName);
+            availableDetectors{end+1} = detName; %#ok<AGROW>
+        catch
+            fprintf('  [MISSING]  %s (install via Add-On Explorer for Continuous mode)\n', displayName);
         end
     end
 

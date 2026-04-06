@@ -18,9 +18,14 @@ function S = sai_init(networkName)
             'C:\ProgramData\MATLAB\SupportPackages\R2026aPrerelease');
     end
 
-    [S.net, S.inputSize] = sai_loadNetwork(networkName);
+    [S.net, S.inputSize, S.isOnnx] = sai_loadNetwork(networkName);
     S.networkName = networkName;
     S.emojiMap = sai_buildEmojiMap();
+    if S.isOnnx
+        S.imagenetLabels = sai_imagenetLabels();
+    else
+        S.imagenetLabels = {};
+    end
 
     % Load emotion detection model if available
     modelPath = fullfile(fileparts(mfilename('fullpath')), 'emotion_net.mat');

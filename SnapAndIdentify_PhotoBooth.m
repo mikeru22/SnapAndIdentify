@@ -2,7 +2,7 @@
 % Desktop/laptop + USB webcam. Interactive uifigure UI.
 
 %% ====== CHECK DEPENDENCIES ======
-availableNetworks = sai_checkDependencies();
+[availableNetworks, availableDetectors] = sai_checkDependencies();
 
 %% ====== SETTINGS (Museum Staff: Adjust These!) ======
 numPhotos = 5;
@@ -37,6 +37,7 @@ cfg.cameraIndex = cameraIndex;
 cfg.gameMode = gameMode;
 cfg.networkName = networkName;
 cfg.availableNetworks = availableNetworks;
+cfg.availableDetectors = availableDetectors;
 cfg.cameraList = camList;
 
 SnapAndIdentify_Desktop(cfg);
