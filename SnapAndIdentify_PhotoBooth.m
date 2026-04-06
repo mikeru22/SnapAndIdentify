@@ -10,8 +10,18 @@ delayBetween = 3;
 countdownBefore = 5;
 resetTimeout = 60;
 gameMode = 'objectid';              % 'objectid' or 'emotion'
-cameraIndex = 2;
-networkName = 'googlenet';          % 'googlenet', 'resnet18', 'resnet50', 'squeezenet'
+cameraIndex = 1;
+% Auto-select best available network (highest accuracy first)
+networkPrefs = {'efficientnetlite4','efficientnetb0','resnet101', ...
+    'resnet50','nasnetmobile','mobilenetv2','googlenet', ...
+    'resnet18','shufflenet','squeezenet'};
+networkName = 'googlenet';  % fallback
+for np = 1:numel(networkPrefs)
+    if ismember(networkPrefs{np}, availableNetworks)
+        networkName = networkPrefs{np};
+        break;
+    end
+end
 
 %% ====== AUTO-SETUP: Emotion model ======
 matFile = fullfile(fileparts(mfilename('fullpath')), 'emotion_net.mat');
