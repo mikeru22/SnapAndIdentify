@@ -20,8 +20,6 @@ function SnapAndIdentify_Desktop(cfg)
     hContImg       = [];
     contStatus     = [];
     contLabel      = [];              % classification label overlay
-    totalDetections = 0;
-    uniqueLabels    = {};
     contNet        = [];              % classifier network for continuous mode
     contInputSize  = [];
     contIsOnnx     = false;
@@ -409,8 +407,6 @@ function SnapAndIdentify_Desktop(cfg)
                 'ButtonPushedFcn',@(~,~) setBackPressed());
             drawnow;
 
-            totalDetections = 0;
-            uniqueLabels = {};
             contNet = []; contIsOnnx = false; contImgnetLabels = {};
             detector = [];
             timerStarted = false;
@@ -1097,15 +1093,6 @@ function SnapAndIdentify_Desktop(cfg)
                 annotated = insertObjectAnnotation(frame, 'rectangle', bboxes, displayLabels, ...
                     'FontSize', 18, 'LineWidth', 3);
                 hContImg.CData = annotated;
-                % Track stats
-                for dj = 1:numel(displayLabels)
-                    lStr = char(displayLabels(dj));
-                    if ~ismember(lStr, uniqueLabels)
-                        uniqueLabels{end+1} = lStr; %#ok<AGROW>
-                    end
-                end
-                totalDetections = totalDetections + numel(displayLabels);
-                contStatus.Text = sprintf('Objects found: %d | Unique types: %d', totalDetections, numel(uniqueLabels));
             else
                 hContImg.CData = frame;
             end
@@ -1139,11 +1126,6 @@ function SnapAndIdentify_Desktop(cfg)
             contLabel.Text = sprintf( ...
                 '<html><body style="%s"><span style="font-size:1.4em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
                 emojiFontCSS(), emoji, cleanName, confStr);
-            totalDetections = totalDetections + 1;
-            if ~ismember(cleanName, uniqueLabels)
-                uniqueLabels{end+1} = cleanName; %#ok<AGROW>
-            end
-            contStatus.Text = sprintf('Classifications: %d | Unique: %d', totalDetections, numel(uniqueLabels));
             drawnow limitrate;
         catch ME4
             try
