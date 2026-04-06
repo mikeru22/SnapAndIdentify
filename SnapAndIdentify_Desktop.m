@@ -11,14 +11,21 @@ function SnapAndIdentify_Desktop(cfg)
     feedback      = zeros(1, cfg.numPhotos);
     currentMode   = cfg.gameMode;       % 'objectid', 'emotion', or 'continuous'
     pendingNetworkName = cfg.networkName;
+    savedClassifierName = cfg.networkName;  % remember classifier when switching to continuous
     promptMode    = false;              % guided emotion prompts
 
     % Continuous mode shared state (for nested callbacks)
     detector       = [];
     hContImg       = [];
     contStatus     = [];
+    contLabel      = [];              % classification label overlay
     totalDetections = 0;
     uniqueLabels    = {};
+    contNet        = [];              % classifier network for continuous mode
+    contInputSize  = [];
+    contIsOnnx     = false;
+    contImgnetLabels = {};
+    contEmojiMap   = [];
 
     % Logo path
     logoFile = fullfile(fileparts(mfilename('fullpath')), 'mathworks-logo-full-color-rgb.png');
@@ -155,6 +162,9 @@ function SnapAndIdentify_Desktop(cfg)
         % AI Network dropdown (hidden in emotion mode, only shows installed networks)
         allNetNames  = {'googlenet','resnet18','resnet50','squeezenet','resnet101','mobilenetv2','efficientnetb0','nasnetmobile','shufflenet','mobilenetv3small','mobilenetv3large','efficientnetlite4'};
         allNetLabels = {'GoogLeNet','ResNet-18','ResNet-50','SqueezeNet','ResNet-101','MobileNet-v2','EfficientNet-b0','NASNet-Mobile','ShuffleNet','MobileNetV3-Small','MobileNetV3-Large','EfficientNet-Lite4'};
+        % Detector names (for continuous mode)
+        detectorNames  = {'tiny-yolov4-coco'};
+        detectorLabels = {'Tiny YOLOv4 (COCO)'};
         if isfield(cfg, 'availableNetworks') && ~isempty(cfg.availableNetworks)
             availNets = cfg.availableNetworks;
         else
@@ -163,6 +173,15 @@ function SnapAndIdentify_Desktop(cfg)
         keepIdx = ismember(allNetNames, availNets);
         ddItems     = allNetLabels(keepIdx);
         ddItemsData = allNetNames(keepIdx);
+        % Add available detectors to the dropdown
+        if isfield(cfg, 'availableDetectors') && ~isempty(cfg.availableDetectors)
+            for di = 1:numel(detectorNames)
+                if ismember(detectorNames{di}, cfg.availableDetectors)
+                    ddItems     = [ddItems, detectorLabels(di)];
+                    ddItemsData = [ddItemsData, detectorNames(di)];
+                end
+            end
+        end
         % Ensure selected network is in the list
         if ~ismember(pendingNetworkName, ddItemsData) && ~isempty(ddItemsData)
             pendingNetworkName = ddItemsData{1};
@@ -329,6 +348,8 @@ function SnapAndIdentify_Desktop(cfg)
 
         % ==================== CONTINUOUS MODE ====================
         if strcmpi(currentMode, 'continuous')
+            useDetector = isDetectorName(pendingNetworkName);
+
             contFig = uifigure('Name','Continuous Detection','Color','black', ...
                 'WindowState','maximized');
             [figW, figH] = waitForMaximize(contFig);
@@ -336,7 +357,8 @@ function SnapAndIdentify_Desktop(cfg)
             addExitButton(contFig, sf);
 
             % Camera display
-            contAx = uiaxes(contFig,'Position',[0 round(50*sf) figW figH-round(50*sf)]);
+            statusBarH = round(50*sf);
+            contAx = uiaxes(contFig,'Position',[0 statusBarH figW figH-statusBarH]);
             contAx.XTick = []; contAx.YTick = [];
             contAx.Color = 'black'; contAx.XColor = 'none'; contAx.YColor = 'none';
             contAx.Toolbar.Visible = 'off'; contAx.CLim = [0 255];
@@ -350,12 +372,20 @@ function SnapAndIdentify_Desktop(cfg)
                 hContImg = [];
             end
 
-            % Status overlay
-            contStatus = uilabel(contFig,'Text','Loading detector...', ...
+            % Status overlay (bottom bar)
+            contStatus = uilabel(contFig,'Text','Loading...', ...
                 'FontSize',round(18*sf),'FontColor','yellow', ...
                 'BackgroundColor',[0 0 0 0.5], ...
                 'HorizontalAlignment','center', ...
-                'Position',[0 0 figW round(50*sf)]);
+                'Position',[0 0 figW statusBarH]);
+
+            % Classification label overlay (large, centered over camera — classifier mode only)
+            contLabel = uilabel(contFig,'Text','','Interpreter','html', ...
+                'FontSize',round(40*sf),'FontWeight','bold', ...
+                'FontColor','white','HorizontalAlignment','center', ...
+                'BackgroundColor',[0 0 0 0.5], ...
+                'Position',[figW*0.1 figH-round(120*sf) figW*0.8 round(100*sf)]);
+            contLabel.Visible = 'off';
 
             % Back button
             backW = round(140*sf); backH = round(40*sf);
@@ -367,30 +397,52 @@ function SnapAndIdentify_Desktop(cfg)
                 'ButtonPushedFcn',@(~,~) setBackPressed());
             drawnow;
 
-            % Load detector
+            totalDetections = 0;
+            uniqueLabels = {};
+            contNet = []; contIsOnnx = false; contImgnetLabels = {};
             detector = [];
-            hasDetectors = isfield(cfg, 'availableDetectors') && ~isempty(cfg.availableDetectors);
-            if hasDetectors
+            timerStarted = false;
+
+            if useDetector
+                % --- YOLO detector path ---
+                contStatus.Text = 'Loading YOLO detector...';
+                drawnow;
                 try
-                    detector = sai_loadDetector(cfg.availableDetectors{1});
+                    detector = sai_loadDetector(pendingNetworkName);
                     contStatus.Text = 'Detecting objects...';
                 catch ME3
                     contStatus.Text = sprintf('Detector load failed: %s', ME3.message);
                 end
             else
-                contStatus.Text = 'No YOLO detector installed. Install via Add-On Explorer.';
+                % --- Classifier path ---
+                contStatus.Text = sprintf('Loading %s...', pendingNetworkName);
+                drawnow;
+                try
+                    [contNet, contInputSize, contIsOnnx] = sai_loadNetwork(pendingNetworkName);
+                    contEmojiMap = sai_buildEmojiMap();
+                    if contIsOnnx
+                        contImgnetLabels = sai_imagenetLabels();
+                    end
+                    contStatus.Text = sprintf('Classifying with %s...', pendingNetworkName);
+                    contLabel.Visible = 'on';
+                catch ME3
+                    contStatus.Text = sprintf('Network load failed: %s', ME3.message);
+                end
             end
             drawnow;
 
-            totalDetections = 0;
-            uniqueLabels = {};
-
-            if ~isempty(detector) && ~isempty(hContImg)
-                % Timer-based detection loop
-                detTimer = timer('ExecutionMode','fixedSpacing', ...
-                    'Period', 0.15, 'BusyMode','drop', ...
-                    'TimerFcn', @(~,~) detectAndDisplay());
+            if ~isempty(hContImg) && (useDetector && ~isempty(detector) || ~useDetector && ~isempty(contNet))
+                if useDetector
+                    detTimer = timer('ExecutionMode','fixedSpacing', ...
+                        'Period', 0.15, 'BusyMode','drop', ...
+                        'TimerFcn', @(~,~) detectAndDisplay());
+                else
+                    detTimer = timer('ExecutionMode','fixedSpacing', ...
+                        'Period', 0.15, 'BusyMode','drop', ...
+                        'TimerFcn', @(~,~) classifyAndDisplay());
+                end
                 start(detTimer);
+                timerStarted = true;
             end
 
             % Wait for back or exit
@@ -399,7 +451,7 @@ function SnapAndIdentify_Desktop(cfg)
                 pause(0.2);
             end
 
-            if ~isempty(detector) && ~isempty(hContImg)
+            if timerStarted
                 try stop(detTimer); delete(detTimer); catch, end
             end
             if isvalid(contFig), delete(contFig); end
@@ -934,8 +986,8 @@ function SnapAndIdentify_Desktop(cfg)
                     'FontSize', 18, 'LineWidth', 3);
                 hContImg.CData = annotated;
                 % Track stats
-                for di = 1:numel(labels)
-                    lStr = char(labels(di));
+                for dj = 1:numel(labels)
+                    lStr = char(labels(dj));
                     if ~ismember(lStr, uniqueLabels)
                         uniqueLabels{end+1} = lStr; %#ok<AGROW>
                     end
@@ -950,6 +1002,41 @@ function SnapAndIdentify_Desktop(cfg)
         end
     end
 
+    function classifyAndDisplay()
+        try
+            frame = snapshot(cam);
+            hContImg.CData = frame;
+            % Classify
+            if contIsOnnx
+                imResized = imresize(frame, contInputSize);
+                imSingle = single(imResized) / 255;
+                dl = dlarray(imSingle, 'SSCB');
+                scores = extractdata(predict(contNet, dl));
+                scores = scores(:)';
+                [maxScr, idx] = max(scores);
+                lbl = contImgnetLabels{idx};
+            else
+                imResized = imresize(frame, contInputSize);
+                [lbl, scr] = classify(contNet, imResized);
+                maxScr = max(scr);
+                lbl = char(lbl);
+            end
+            emoji = sai_lookupEmoji(lbl, contEmojiMap);
+            cleanName = sai_modernizeLabel(sai_cleanLabel(lbl));
+            confStr = sai_confidenceText(maxScr);
+            contLabel.Text = sprintf( ...
+                '<html><body style="%s"><span style="font-size:1.3em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
+                emojiFontCSS(), emoji, cleanName, confStr);
+            totalDetections = totalDetections + 1;
+            if ~ismember(cleanName, uniqueLabels)
+                uniqueLabels{end+1} = cleanName; %#ok<AGROW>
+            end
+            contStatus.Text = sprintf('Classifications: %d | Unique: %d', totalDetections, numel(uniqueLabels));
+            drawnow limitrate;
+        catch
+        end
+    end
+
     function updateModeUI()
         objBtn.BackgroundColor  = modeInactiveColor;
         contBtn.BackgroundColor = modeInactiveColor;
@@ -959,16 +1046,34 @@ function SnapAndIdentify_Desktop(cfg)
             netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
             ddPhotos.Enable = 'on';   ddDelay.Enable = 'on';  ddCountdown.Enable = 'on';
             promptBtn.Visible = 'off';
+            % Restore classifier if coming from continuous
+            if isDetectorName(pendingNetworkName)
+                pendingNetworkName = savedClassifierName;
+                ddNetwork.Value = pendingNetworkName;
+            end
         elseif strcmpi(currentMode, 'continuous')
             contBtn.BackgroundColor = modeActiveColor;
             netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
             ddPhotos.Enable = 'off';  ddDelay.Enable = 'off';  ddCountdown.Enable = 'off';
             promptBtn.Visible = 'off';
+            % Save current classifier and default to YOLO
+            if ~isDetectorName(pendingNetworkName)
+                savedClassifierName = pendingNetworkName;
+            end
+            if ismember('tiny-yolov4-coco', ddNetwork.ItemsData)
+                pendingNetworkName = 'tiny-yolov4-coco';
+                ddNetwork.Value = 'tiny-yolov4-coco';
+            end
         elseif strcmpi(currentMode, 'emotion')
             emoBtn.BackgroundColor = modeActiveColor;
             netLabel.Visible = 'off';  ddNetwork.Visible = 'off';
             ddPhotos.Enable = 'on';    ddDelay.Enable = 'on';   ddCountdown.Enable = 'on';
             promptBtn.Visible = 'on';
+            % Restore classifier if coming from continuous
+            if isDetectorName(pendingNetworkName)
+                pendingNetworkName = savedClassifierName;
+                ddNetwork.Value = pendingNetworkName;
+            end
         end
     end
 end
@@ -1017,4 +1122,9 @@ function [figW, figH] = waitForMaximize(fig)
     end
     figW = screenSz(3); figH = screenSz(4) - 40;
     fig.Position = [1 1 figW figH];
+end
+
+function tf = isDetectorName(name)
+    detectors = {'tiny-yolov4-coco', 'yolov4-coco', 'csp-darknet53-coco'};
+    tf = ismember(lower(name), detectors);
 end
