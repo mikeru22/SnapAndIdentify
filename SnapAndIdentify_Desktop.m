@@ -9,11 +9,14 @@ function SnapAndIdentify_Desktop(cfg)
     exitRequested = false;
     backPressed   = false;              % continuous mode back button
     feedback      = zeros(1, cfg.numPhotos);
-    currentMode   = cfg.gameMode;       % 'objectid', 'emotion', or 'continuous'
+    currentMode   = cfg.gameMode;       % 'objectid' or 'emotion'
+    continuousMode = false;             % continuous sub-mode (works with either mode)
     pendingNetworkName = cfg.networkName;
     savedClassifierName = cfg.networkName;  % remember classifier when switching to continuous
     promptMode    = false;              % guided emotion prompts
     detailedLabels = false;             % YOLO + classifier sub-classification
+    snapMode      = false;              % on-demand snap (emotion mode)
+    snapPressed   = false;              % snap button pressed flag
 
     % Continuous mode shared state (for nested callbacks)
     detector       = [];
@@ -25,6 +28,9 @@ function SnapAndIdentify_Desktop(cfg)
     contIsOnnx     = false;
     contImgnetLabels = {};
     contEmojiMap   = [];
+    contEmaScores  = [];              % EMA-smoothed score vector
+    contEmaAlpha   = 0.3;             % EMA decay (30% new, 70% history)
+    contMinConf    = 0.15;            % min smoothed confidence to display
 
     % Logo path
     logoFile = fullfile(fileparts(mfilename('fullpath')), 'mathworks-logo-full-color-rgb.png');
@@ -221,13 +227,15 @@ function SnapAndIdentify_Desktop(cfg)
             'ValueChangedFcn',@(src,~) onCameraSelect(src.Value));
         yy = yy - rowH_s - padS;
 
-        % Mode selection: three side-by-side buttons + prompt toggle
-        modeBtnH = round(38*sf);
-        modeBtnW = round((settingsW - 4*padS) / 3);
+        % Mode selection: two side-by-side buttons + sub-option toggles
+        modeBtnH = round(32*sf);
+        modeBtnW = round((settingsW - 3*padS) / 2);
         modeActiveColor   = [0.4 0.2 0.7];
         modeInactiveColor = [0.35 0.35 0.35];
-        modeRow2Y = settingsY + padS;
-        modeRow1Y = modeRow2Y + modeBtnH + round(4*sf);
+        modeGap  = round(3*sf);
+        modeRow3Y = settingsY + padS;
+        modeRow2Y = modeRow3Y + modeBtnH + modeGap;
+        modeRow1Y = modeRow2Y + modeBtnH + modeGap;
 
         objBtn = uibutton(startFig,'push', ...
             'Text','<html><body>&#x1F50D; Object ID</body></html>', ...
@@ -235,35 +243,50 @@ function SnapAndIdentify_Desktop(cfg)
             'FontSize',round(12*sf),'FontWeight','bold','FontColor','white', ...
             'Position',[settingsX+padS modeRow1Y modeBtnW modeBtnH], ...
             'ButtonPushedFcn',@(~,~) onModeSelect('objectid'));
-        contBtn = uibutton(startFig,'push', ...
-            'Text','<html><body>&#x1F4F7; Continuous</body></html>', ...
-            'Interpreter','html', ...
-            'FontSize',round(12*sf),'FontWeight','bold','FontColor','white', ...
-            'Position',[settingsX+2*padS+modeBtnW modeRow1Y modeBtnW modeBtnH], ...
-            'ButtonPushedFcn',@(~,~) onModeSelect('continuous'));
         emoBtn = uibutton(startFig,'push', ...
             'Text','<html><body>&#x1F60A; Emotion</body></html>', ...
             'Interpreter','html', ...
             'FontSize',round(12*sf),'FontWeight','bold','FontColor','white', ...
-            'Position',[settingsX+3*padS+2*modeBtnW modeRow1Y modeBtnW modeBtnH], ...
+            'Position',[settingsX+2*padS+modeBtnW modeRow1Y modeBtnW modeBtnH], ...
             'ButtonPushedFcn',@(~,~) onModeSelect('emotion'));
 
-        % Guided Prompts toggle (only visible in emotion mode)
-        promptBtnW = settingsW - 2*padS;
+        % Continuous toggle (visible in both modes, row 2)
+        contToggleW = settingsW - 2*padS;
+        contToggle = uibutton(startFig,'push', ...
+            'Text','Continuous: OFF', ...
+            'FontSize',round(11*sf),'FontWeight','bold','FontColor','white', ...
+            'BackgroundColor',[0.35 0.35 0.35], ...
+            'Position',[settingsX+padS modeRow2Y contToggleW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onContinuousToggle());
+
+        % Sub-option toggles (row 3 — context-dependent visibility)
+        halfBtnW = floor((settingsW - 3*padS) / 2);
+
+        % Guided Prompts toggle (emotion mode, non-continuous)
         promptBtn = uibutton(startFig,'push', ...
             'Text','Guided Prompts: OFF', ...
             'FontSize',round(11*sf),'FontWeight','bold','FontColor','white', ...
             'BackgroundColor',[0.35 0.35 0.35], ...
-            'Position',[settingsX+padS modeRow2Y promptBtnW modeBtnH], ...
+            'Position',[settingsX+padS modeRow3Y halfBtnW modeBtnH], ...
             'ButtonPushedFcn',@(~,~) onPromptToggle());
         promptBtn.Visible = 'off';
 
-        % Detailed Labels toggle (only visible in continuous mode with YOLO)
+        % On-Demand Snap toggle (emotion mode, non-continuous)
+        snapBtn = uibutton(startFig,'push', ...
+            'Text','On-Demand Snap: OFF', ...
+            'FontSize',round(11*sf),'FontWeight','bold','FontColor','white', ...
+            'BackgroundColor',[0.35 0.35 0.35], ...
+            'Position',[settingsX+2*padS+halfBtnW modeRow3Y halfBtnW modeBtnH], ...
+            'ButtonPushedFcn',@(~,~) onSnapToggle());
+        snapBtn.Visible = 'off';
+
+        % Detailed Labels toggle (objectid continuous mode with YOLO)
+        detailBtnW = settingsW - 2*padS;
         detailBtn = uibutton(startFig,'push', ...
             'Text','Detailed Labels: OFF', ...
             'FontSize',round(11*sf),'FontWeight','bold','FontColor','white', ...
             'BackgroundColor',[0.35 0.35 0.35], ...
-            'Position',[settingsX+padS modeRow2Y promptBtnW modeBtnH], ...
+            'Position',[settingsX+padS modeRow3Y detailBtnW modeBtnH], ...
             'ButtonPushedFcn',@(~,~) onDetailToggle());
         detailBtn.Visible = 'off';
 
@@ -356,8 +379,9 @@ function SnapAndIdentify_Desktop(cfg)
         end
 
         % ==================== CONTINUOUS MODE ====================
-        if strcmpi(currentMode, 'continuous')
-            useDetector = isDetectorName(pendingNetworkName);
+        if continuousMode
+            isEmotionCont = strcmpi(currentMode, 'emotion');
+            useDetector = ~isEmotionCont && isDetectorName(pendingNetworkName);
 
             contFig = uifigure('Name','Continuous Detection','Color','black', ...
                 'WindowState','maximized');
@@ -367,8 +391,16 @@ function SnapAndIdentify_Desktop(cfg)
             % Camera display
             statusBarH = round(50*sf);
             contLabelH = round(80*sf);
-            camBottomY = statusBarH;  % adjusted below for classifier mode
-            contAx = uiaxes(contFig,'Position',[0 camBottomY figW figH-camBottomY]);
+            camBottomY = statusBarH;  % adjusted below for classifier/emotion mode
+
+            % Emotion guide panel on right side (continuous emotion mode)
+            contGuideW = 0;
+            if isEmotionCont
+                contGuideW = round(280*sf);
+            end
+            contCamW = figW - contGuideW;
+
+            contAx = uiaxes(contFig,'Position',[0 camBottomY contCamW figH-camBottomY]);
             contAx.XTick = []; contAx.YTick = [];
             contAx.Color = 'black'; contAx.XColor = 'none'; contAx.YColor = 'none';
             contAx.Toolbar.Visible = 'off'; contAx.CLim = [0 255];
@@ -382,19 +414,44 @@ function SnapAndIdentify_Desktop(cfg)
                 hContImg = [];
             end
 
+            if isEmotionCont
+                contGuideH = figH - camBottomY;
+                guidePanel = uipanel(contFig, ...
+                    'Title','Emotions','FontSize',round(16*sf), ...
+                    'BackgroundColor',[0.12 0.12 0.12], ...
+                    'ForegroundColor','white', ...
+                    'Position',[contCamW camBottomY contGuideW contGuideH]);
+                emotionLabelsAll = sai_emotionLabels();
+                guideEmojiMap = sai_buildEmotionEmojiMap();
+                eRowH = round((contGuideH - round(40*sf)) / numel(emotionLabelsAll));
+                for ei = 1:numel(emotionLabelsAll)
+                    ey = contGuideH - round(40*sf) - ei*eRowH;
+                    emojiForLabel = guideEmojiMap(emotionLabelsAll{ei});
+                    htmlStr = sprintf(['<html><body style="text-align:center;%s">' ...
+                        '<span style="font-size:2.5em;">%s</span><br/>' ...
+                        '<b>%s</b></body></html>'], ...
+                        emojiFontCSS(), emojiForLabel, sai_emotionDisplayName(emotionLabelsAll{ei}));
+                    uilabel(guidePanel,'Text',htmlStr, ...
+                        'Interpreter','html', ...
+                        'FontSize',round(18*sf),'FontColor','white', ...
+                        'HorizontalAlignment','center', ...
+                        'Position',[round(4*sf) ey contGuideW-round(8*sf) eRowH]);
+                end
+            end
+
             % Status overlay (bottom bar)
             contStatus = uilabel(contFig,'Text','Loading...', ...
                 'FontSize',round(18*sf),'FontColor','yellow', ...
                 'BackgroundColor',[0 0 0 0.5], ...
                 'HorizontalAlignment','center', ...
-                'Position',[0 0 figW statusBarH]);
+                'Position',[0 0 contCamW statusBarH]);
 
-            % Classification label overlay (large, above status bar — classifier mode only)
+            % Classification label overlay (large, above status bar)
             contLabel = uilabel(contFig,'Text','Classifying...','Interpreter','html', ...
                 'FontSize',round(36*sf),'FontWeight','bold', ...
                 'FontColor','yellow','HorizontalAlignment','center', ...
                 'BackgroundColor','black', ...
-                'Position',[0 statusBarH figW contLabelH]);
+                'Position',[0 statusBarH contCamW contLabelH]);
             contLabel.Visible = 'off';
 
             % Back button
@@ -410,10 +467,20 @@ function SnapAndIdentify_Desktop(cfg)
             drawnow;
 
             contNet = []; contIsOnnx = false; contImgnetLabels = {};
+            contEmaScores = [];
             detector = [];
             timerStarted = false;
 
-            if useDetector
+            if isEmotionCont
+                % --- Emotion continuous path ---
+                if ~isempty(S.emotionNet)
+                    contStatus.Text = 'Detecting emotions...';
+                    contLabel.Visible = 'on';
+                    contAx.Position = [0 statusBarH+contLabelH contCamW figH-statusBarH-contLabelH];
+                else
+                    contStatus.Text = 'Emotion model not loaded.';
+                end
+            elseif useDetector
                 % --- YOLO detector path ---
                 contStatus.Text = 'Loading YOLO detector...';
                 drawnow;
@@ -425,7 +492,6 @@ function SnapAndIdentify_Desktop(cfg)
                 end
                 % Also load best available classifier for detailed labels mode
                 if detailedLabels && ~isempty(detector)
-                    % Preference order: highest accuracy first
                     classifierPrefs = {'efficientnetlite4','efficientnetb0','resnet101', ...
                         'resnet50','nasnetmobile','mobilenetv2','googlenet', ...
                         'resnet18','shufflenet','squeezenet'};
@@ -444,7 +510,6 @@ function SnapAndIdentify_Desktop(cfg)
                             classifierLoaded = true;
                             break;
                         catch
-                            % Try next network
                         end
                     end
                     if ~classifierLoaded
@@ -464,15 +529,21 @@ function SnapAndIdentify_Desktop(cfg)
                     end
                     contStatus.Text = sprintf('Classifying with %s...', pendingNetworkName);
                     contLabel.Visible = 'on';
-                    % Shrink camera to make room for label bar
-                    contAx.Position = [0 statusBarH+contLabelH figW figH-statusBarH-contLabelH];
+                    contAx.Position = [0 statusBarH+contLabelH contCamW figH-statusBarH-contLabelH];
                 catch ME3
                     contStatus.Text = sprintf('Network load failed: %s', ME3.message);
                 end
             end
             drawnow;
 
-            if ~isempty(hContImg) && (useDetector && ~isempty(detector) || ~useDetector && ~isempty(contNet))
+            % Start the appropriate timer
+            if isEmotionCont && ~isempty(S.emotionNet) && ~isempty(hContImg)
+                detTimer = timer('ExecutionMode','fixedSpacing', ...
+                    'Period', 0.15, 'BusyMode','drop', ...
+                    'TimerFcn', @(~,~) emotionAndDisplay());
+                start(detTimer);
+                timerStarted = true;
+            elseif ~isempty(hContImg) && (useDetector && ~isempty(detector) || ~useDetector && ~isempty(contNet))
                 if useDetector
                     detTimer = timer('ExecutionMode','fixedSpacing', ...
                         'Period', 0.15, 'BusyMode','drop', ...
@@ -506,7 +577,7 @@ function SnapAndIdentify_Desktop(cfg)
         % Determine photo count and prompt setup
         isPromptMode = promptMode && strcmpi(currentMode, 'emotion');
         if isPromptMode
-            promptEmotions = {'neutral','happy','sad','surprise','angry'};
+            promptEmotions = {'calm','happy','sad','surprise','angry'};
             promptEmojiMap = sai_buildEmotionEmojiMap();
             nPhotos = numel(promptEmotions);
         else
@@ -590,7 +661,7 @@ function SnapAndIdentify_Desktop(cfg)
                 htmlStr = sprintf(['<html><body style="text-align:center;%s">' ...
                     '<span style="font-size:2.5em;">%s</span><br/>' ...
                     '<b>%s</b></body></html>'], ...
-                    emojiFontCSS(), emojiForLabel, sai_cleanLabel(emotionLabels{ei}));
+                    emojiFontCSS(), emojiForLabel, sai_emotionDisplayName(emotionLabels{ei}));
                 uilabel(guidePanel,'Text',htmlStr, ...
                     'Interpreter','html', ...
                     'FontSize',round(18*sf),'FontColor','white', ...
@@ -635,33 +706,57 @@ function SnapAndIdentify_Desktop(cfg)
                     drawnow;
                 end
 
-                if p == 1
-                    countSec = cfg.countdownBefore;
-                else
-                    countSec = cfg.delayBetween;
-                end
-
-                % Countdown with timer-based camera preview
-                countdownTimer = timer('ExecutionMode','fixedSpacing', ...
-                    'Period', 0.05, 'BusyMode','drop', ...
-                    'TimerFcn', @(~,~) updateCamPreview());
-                start(countdownTimer);
-                for w = countSec:-1:1
-                    if exitRequested || backPressed, break; end
-                    if p == 1
-                        statusLabel.Text = ehtmlf('&#x1F3AF;','Photo %d of %d &mdash; %d', p, nPhotos, w);
-                    else
-                        statusLabel.Text = ehtmlf('','Next photo in %d...', w);
-                    end
+                if snapMode && strcmpi(currentMode, 'emotion')
+                    % On-demand snap: show SNAP button and wait
+                    snapPressed = false;
+                    snapBtnW = round(200*sf); snapBtnH = round(60*sf);
+                    snapBtnUI = uibutton(snapFig,'push', ...
+                        'Text','<html><body style="font-size:1.3em;">&#x1F4F8; SNAP!</body></html>', ...
+                        'Interpreter','html', ...
+                        'FontSize',round(28*sf),'FontWeight','bold', ...
+                        'BackgroundColor',[0.9 0.2 0.3],'FontColor','white', ...
+                        'Position',[camX+(camW-snapBtnW)/2 camY+round(20*sf) snapBtnW snapBtnH], ...
+                        'ButtonPushedFcn',@(~,~) onSnapPressed());
+                    countdownTimer = timer('ExecutionMode','fixedSpacing', ...
+                        'Period', 0.05, 'BusyMode','drop', ...
+                        'TimerFcn', @(~,~) updateCamPreview());
+                    start(countdownTimer);
+                    statusLabel.Text = ehtmlf('&#x1F4F8;','Photo %d of %d &mdash; Press SNAP when ready!', p, nPhotos);
                     drawnow;
-                    % Interruptible 1-second wait (check exit every 0.2s)
-                    for cw = 1:5
-                        if exitRequested || backPressed, break; end
-                        pause(0.2);
+                    while ~snapPressed && ~exitRequested && ~backPressed
+                        if ~isvalid(snapFig), break; end
+                        pause(0.1);
                     end
+                    stop(countdownTimer); delete(countdownTimer);
+                    if isvalid(snapBtnUI), delete(snapBtnUI); end
+                    if exitRequested || backPressed, break; end
+                else
+                    % Countdown timer mode
+                    if p == 1
+                        countSec = cfg.countdownBefore;
+                    else
+                        countSec = cfg.delayBetween;
+                    end
+                    countdownTimer = timer('ExecutionMode','fixedSpacing', ...
+                        'Period', 0.05, 'BusyMode','drop', ...
+                        'TimerFcn', @(~,~) updateCamPreview());
+                    start(countdownTimer);
+                    for w = countSec:-1:1
+                        if exitRequested || backPressed, break; end
+                        if p == 1
+                            statusLabel.Text = ehtmlf('&#x1F3AF;','Photo %d of %d &mdash; %d', p, nPhotos, w);
+                        else
+                            statusLabel.Text = ehtmlf('','Next photo in %d...', w);
+                        end
+                        drawnow;
+                        for cw = 1:5
+                            if exitRequested || backPressed, break; end
+                            pause(0.2);
+                        end
+                    end
+                    stop(countdownTimer); delete(countdownTimer);
+                    if exitRequested || backPressed, break; end
                 end
-                stop(countdownTimer); delete(countdownTimer);
-                if exitRequested || backPressed, break; end
 
                 statusLabel.Text = ehtmlf('&#x1F4F8;','SNAP!  Photo %d of %d', p, nPhotos);
                 drawnow;
@@ -713,7 +808,7 @@ function SnapAndIdentify_Desktop(cfg)
                     if isMatch, matchStr = '&#x2705;'; else, matchStr = '&#x274C;'; end
                     predLabel.Text = sprintf( ...
                         '<html><body style="%s">Prompt: %s <b>%s</b> &rarr; Detected: %s <b>%s</b> %s</body></html>', ...
-                        emojiFontCSS(), char(pPromptEmoji(p)), sai_cleanLabel(char(pPrompt(p))), ...
+                        emojiFontCSS(), char(pPromptEmoji(p)), sai_emotionDisplayName(char(pPrompt(p))), ...
                         char(pEmoji(p)), char(pName(p)), matchStr);
                 else
                     predLabel.Text = ehtmlPred(pEmoji(p), pName(p), pConf(p));
@@ -783,7 +878,7 @@ function SnapAndIdentify_Desktop(cfg)
                 matchStr = char("&#x2705;" * isMatch + "&#x274C;" * ~isMatch);
                 rowLabelText = sprintf( ...
                     '<html><body style="%s">Prompt: %s <b>%s</b> &rarr; Detected: %s <b>%s</b> %s</body></html>', ...
-                    emojiFontCSS(), char(pPromptEmoji(p)), sai_cleanLabel(char(pPrompt(p))), ...
+                    emojiFontCSS(), char(pPromptEmoji(p)), sai_emotionDisplayName(char(pPrompt(p))), ...
                     char(pEmoji(p)), char(pName(p)), matchStr);
                 labelW = round(550*sf);
                 gapH   = round(12*sf);
@@ -1047,6 +1142,33 @@ function SnapAndIdentify_Desktop(cfg)
         end
     end
 
+    function onSnapToggle()
+        snapMode = ~snapMode;
+        if snapMode
+            snapBtn.Text = 'On-Demand Snap: ON';
+            snapBtn.BackgroundColor = [0.2 0.7 0.4];
+        else
+            snapBtn.Text = 'On-Demand Snap: OFF';
+            snapBtn.BackgroundColor = [0.35 0.35 0.35];
+        end
+    end
+
+    function onSnapPressed()
+        snapPressed = true;
+    end
+
+    function onContinuousToggle()
+        continuousMode = ~continuousMode;
+        if continuousMode
+            contToggle.Text = 'Continuous: ON';
+            contToggle.BackgroundColor = [0.2 0.7 0.4];
+        else
+            contToggle.Text = 'Continuous: OFF';
+            contToggle.BackgroundColor = [0.35 0.35 0.35];
+        end
+        updateModeUI();
+    end
+
     function onDetailToggle()
         detailedLabels = ~detailedLabels;
         if detailedLabels
@@ -1140,27 +1262,48 @@ function SnapAndIdentify_Desktop(cfg)
         try
             frame = snapshot(cam);
             hContImg.CData = frame;
-            % Classify
+            % Get raw scores as numeric row vector
             if contIsOnnx
                 imResized = imresize(frame, contInputSize);
                 imSingle = single(imResized) / 255;
                 dl = dlarray(imSingle, 'SSCB');
                 scores = extractdata(predict(contNet, dl));
                 scores = scores(:)';
-                [maxScr, idx] = max(scores);
-                lbl = contImgnetLabels{idx};
+                % Softmax if scores are logits
+                if any(scores < 0) || abs(sum(scores) - 1) > 0.01
+                    scores = exp(scores - max(scores));
+                    scores = scores / sum(scores);
+                end
             else
                 imResized = imresize(frame, contInputSize);
-                [lbl, scr] = classify(contNet, imResized);
-                maxScr = max(scr);
-                lbl = char(lbl);
+                [~, scr] = classify(contNet, imResized);
+                scores = double(scr(:)');
             end
-            emoji = sai_lookupEmoji(lbl, contEmojiMap);
-            cleanName = sai_modernizeLabel(sai_cleanLabel(lbl));
-            confStr = sai_confidenceText(maxScr);
-            contLabel.Text = sprintf( ...
-                '<html><body style="%s"><span style="font-size:1.4em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
-                emojiFontCSS(), emoji, cleanName, confStr);
+            % EMA smoothing
+            if isempty(contEmaScores) || numel(contEmaScores) ~= numel(scores)
+                contEmaScores = scores;
+            else
+                contEmaScores = contEmaAlpha * scores + (1 - contEmaAlpha) * contEmaScores;
+            end
+            [maxScr, idx] = max(contEmaScores);
+            if maxScr < contMinConf
+                contLabel.Text = sprintf( ...
+                    '<html><body style="%s"><b>Thinking...</b> &#x1F914;</body></html>', ...
+                    emojiFontCSS());
+            else
+                if contIsOnnx
+                    lbl = contImgnetLabels{idx};
+                else
+                    classes = contNet.Layers(end).Classes;
+                    lbl = char(classes(idx));
+                end
+                emoji = sai_lookupEmoji(lbl, contEmojiMap);
+                cleanName = sai_modernizeLabel(sai_cleanLabel(lbl));
+                confStr = sai_confidenceText(maxScr);
+                contLabel.Text = sprintf( ...
+                    '<html><body style="%s"><span style="font-size:1.4em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
+                    emojiFontCSS(), emoji, cleanName, confStr);
+            end
             drawnow limitrate;
         catch ME4
             try
@@ -1171,42 +1314,73 @@ function SnapAndIdentify_Desktop(cfg)
         end
     end
 
+    function emotionAndDisplay()
+        try
+            frame = snapshot(cam);
+            hContImg.CData = frame;
+            [emoji, label, confStr, found] = sai_classifyEmotion( ...
+                frame, S.emotionNet, S.emotionInputSize, S.emotionEmojiMap);
+            if found
+                contLabel.Text = sprintf( ...
+                    '<html><body style="%s"><span style="font-size:1.4em;">%s</span> <b>%s</b> &mdash; %s</body></html>', ...
+                    emojiFontCSS(), emoji, label, confStr);
+            else
+                contLabel.Text = sprintf( ...
+                    '<html><body style="%s"><span style="font-size:1.4em;">%s</span> <b>%s</b></body></html>', ...
+                    emojiFontCSS(), emoji, label);
+            end
+            drawnow limitrate;
+        catch ME5
+            try
+                contLabel.Text = sprintf('Error: %s', ME5.message);
+                drawnow limitrate;
+            catch
+            end
+        end
+    end
+
     function updateModeUI()
-        objBtn.BackgroundColor  = modeInactiveColor;
-        contBtn.BackgroundColor = modeInactiveColor;
-        emoBtn.BackgroundColor  = modeInactiveColor;
+        objBtn.BackgroundColor = modeInactiveColor;
+        emoBtn.BackgroundColor = modeInactiveColor;
+        % Hide all sub-option toggles by default
+        promptBtn.Visible = 'off';
+        snapBtn.Visible = 'off';
+        detailBtn.Visible = 'off';
+
         if strcmpi(currentMode, 'objectid')
             objBtn.BackgroundColor = modeActiveColor;
-            netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
-            ddPhotos.Enable = 'on';   ddDelay.Enable = 'on';  ddCountdown.Enable = 'on';
-            promptBtn.Visible = 'off';
-            detailBtn.Visible = 'off';
-            % Restore classifier if coming from continuous
-            if isDetectorName(pendingNetworkName)
-                pendingNetworkName = savedClassifierName;
-                ddNetwork.Value = pendingNetworkName;
+            if continuousMode
+                netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
+                ddPhotos.Enable = 'off';  ddDelay.Enable = 'off';  ddCountdown.Enable = 'off';
+                detailBtn.Visible = 'on';
+                % Default to YOLO for continuous object detection
+                if ~isDetectorName(pendingNetworkName)
+                    savedClassifierName = pendingNetworkName;
+                end
+                if ismember('tiny-yolov4-coco', ddNetwork.ItemsData)
+                    pendingNetworkName = 'tiny-yolov4-coco';
+                    ddNetwork.Value = 'tiny-yolov4-coco';
+                end
+            else
+                netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
+                ddPhotos.Enable = 'on';   ddDelay.Enable = 'on';  ddCountdown.Enable = 'on';
+                if isDetectorName(pendingNetworkName)
+                    pendingNetworkName = savedClassifierName;
+                    ddNetwork.Value = pendingNetworkName;
+                end
             end
-        elseif strcmpi(currentMode, 'continuous')
-            contBtn.BackgroundColor = modeActiveColor;
-            netLabel.Visible = 'on';  ddNetwork.Visible = 'on';
-            ddPhotos.Enable = 'off';  ddDelay.Enable = 'off';  ddCountdown.Enable = 'off';
-            promptBtn.Visible = 'off';
-            detailBtn.Visible = 'on';
-            % Save current classifier and default to YOLO
-            if ~isDetectorName(pendingNetworkName)
-                savedClassifierName = pendingNetworkName;
-            end
-            if ismember('tiny-yolov4-coco', ddNetwork.ItemsData)
-                pendingNetworkName = 'tiny-yolov4-coco';
-                ddNetwork.Value = 'tiny-yolov4-coco';
-            end
+            snapMode = false;
         elseif strcmpi(currentMode, 'emotion')
             emoBtn.BackgroundColor = modeActiveColor;
             netLabel.Visible = 'off';  ddNetwork.Visible = 'off';
-            ddPhotos.Enable = 'on';    ddDelay.Enable = 'on';   ddCountdown.Enable = 'on';
-            promptBtn.Visible = 'on';
-            detailBtn.Visible = 'off';
-            % Restore classifier if coming from continuous
+            if continuousMode
+                ddPhotos.Enable = 'off';  ddDelay.Enable = 'off';  ddCountdown.Enable = 'off';
+                snapMode = false;
+            else
+                ddPhotos.Enable = 'on';   ddDelay.Enable = 'on';   ddCountdown.Enable = 'on';
+                promptBtn.Visible = 'on';
+                snapBtn.Visible = 'on';
+            end
             if isDetectorName(pendingNetworkName)
                 pendingNetworkName = savedClassifierName;
                 ddNetwork.Value = pendingNetworkName;

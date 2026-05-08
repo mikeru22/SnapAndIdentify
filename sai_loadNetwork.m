@@ -31,8 +31,15 @@ function [net, inputSize, isOnnx] = sai_loadNetwork(networkName)
             if ~isfile(matFile)
                 sai_setupOnnxNetwork('efficientnetlite4');
             end
-            data = load(matFile, 'net');
-            net = data.net;
+            try
+                data = load(matFile, 'net');
+                net = data.net;
+            catch ME
+                warning('sai_loadNetwork:OnnxLoadFailed', ...
+                    'EfficientNet-Lite4 MAT file is incompatible: %s', ME.message);
+                error('sai_loadNetwork:UnknownNetwork', ...
+                    'EfficientNet-Lite4 failed to load. Select a different network.');
+            end
             inputSize = net.Layers(1).InputSize(1:2);
             isOnnx = true; return;
         otherwise

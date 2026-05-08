@@ -90,10 +90,11 @@ function [availableNetworks, availableDetectors] = sai_checkDependencies()
         if isfile(matPath)
             fprintf('  [OK]       %s (%s found)\n', displayName, matName);
             availableNetworks{end+1} = netKey; %#ok<AGROW>
-        else
+        elseif exist('importNetworkFromONNX','file')
             fprintf('  [AVAILABLE] %s (run sai_setupOnnxNetwork(''%s'') to install)\n', displayName, netKey);
-            % Still add to available list — sai_loadNetwork will auto-setup on first use
             availableNetworks{end+1} = netKey; %#ok<AGROW>
+        else
+            fprintf('  [MISSING]  %s (%s not found, ONNX converter not installed)\n', displayName, matName);
         end
     end
 

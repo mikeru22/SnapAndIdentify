@@ -28,6 +28,6 @@ function [emoji, label, confText, found] = sai_classifyEmotion(img, emotionNet, 
     emotionName = emotionLabels{idx};
 
     emoji = sai_lookupEmoji(emotionName, emotionEmojiMap);
-    label = sai_cleanLabel(emotionName);
+    label = sai_emotionDisplayName(emotionName);
     confText = sai_confidenceText(maxScore);
 end
